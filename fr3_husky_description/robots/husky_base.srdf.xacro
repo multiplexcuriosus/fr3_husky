@@ -1,0 +1,21 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" >
+
+    <xacro:macro name="husky_base_srdf">
+        <disable_collisions link1="front_left_wheel"  link2="front_right_wheel"  reason="Never"/>
+        <disable_collisions link1="front_left_wheel"  link2="mobile_base"        reason="Adjacent"/>
+        <disable_collisions link1="front_left_wheel"  link2="rear_left_wheel"    reason="Never"/>
+        <disable_collisions link1="front_left_wheel"  link2="rear_right_wheel"   reason="Never"/>
+        <disable_collisions link1="front_left_wheel"  link2="top_structure_link" reason="Never"/>
+        <disable_collisions link1="front_right_wheel" link2="mobile_base"        reason="Adjacent"/>
+        <disable_collisions link1="front_right_wheel" link2="rear_left_wheel"    reason="Never"/>
+        <disable_collisions link1="front_right_wheel" link2="rear_right_wheel"   reason="Never"/>
+        <disable_collisions link1="front_right_wheel" link2="top_structure_link" reason="Never"/>
+        <disable_collisions link1="mobile_base"       link2="rear_left_wheel"    reason="Adjacent"/>
+        <disable_collisions link1="mobile_base"       link2="rear_right_wheel"   reason="Adjacent"/>
+        <disable_collisions link1="mobile_base"       link2="top_structure_link" reason="Adjacent"/>
+        <disable_collisions link1="rear_left_wheel"   link2="rear_right_wheel"   reason="Never"/>
+        <disable_collisions link1="rear_right_wheel"  link2="top_structure_link" reason="Never"/>
+        <disable_collisions link1="rear_left_wheel"   link2="top_structure_link" reason="Never"/>
+    </xacro:macro>
+</robot>

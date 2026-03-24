@@ -1,0 +1,15 @@
+# Define the goal
+int8 mode 0                          # 0: CLIK, 1: OSF, 2:QPIK, 3:QPID (default: 0)
+string left_ee_name                  # EE names for tracking left vive controller
+string right_ee_name                 # EE names for tracking right vive controller
+bool move_orientation False          # move EE orientation or not (default: False)
+float32 tracker_pos_multiplier 1.0     # multiplier for target position from vive controller (default: 1.0)
+float32 tracker_ori_multiplier 1.0     # multiplier for target orientation from vive controller (default: 1.0)
+
+---
+# Define the result
+bool is_completed
+---
+# Define a feedback message
+bool is_qp_solved
+string time_verbose

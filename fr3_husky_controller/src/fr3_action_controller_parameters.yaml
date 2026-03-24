@@ -1,0 +1,108 @@
+fr3_action_controller:
+  # FR3
+  robot_name: {
+    type: string_array,
+    default_value: ["left", "right"],
+    description: "Robot name want to control (left/right)"
+  }
+  manipulator_joints: {
+    type: string_array,
+    default_value: [],
+    description: "Joint names of the manipulator system",
+    read_only: true,
+    validation: {
+      unique<>: null,
+      size_gt<>: [0],
+    }
+  }
+  manipulator_command_interface: {
+    type: string,
+    default_value: "effort",
+    description: "Command interface provided by the hardware interface for manipulator joints",
+    read_only: true,
+    validation: {
+      one_of<>: [["position", "velocity", "effort"]],
+    }
+  }
+  manipulator_state_interfaces: {
+    type: string_array,
+    default_value: ["position", "velocity", "effort"],
+    description: "State interfaces provided by the hardware for manipulator joints.",
+    read_only: true,
+    validation: {
+      unique<>: null,
+      size_gt<>: [0],
+      subset_of<>: [["position", "velocity", "effort",]],
+    }
+  }
+
+  dyros_robot_controller:
+    manipulator_joint_gains:
+      kp: {
+          type: double_array,
+          default_value: [600.0, 600.0, 600.0, 600.0, 250.0, 150.0, 50.0],
+          description: "Manipulator joint position error gains for PD control (size must be 7*num_robot)"
+      }
+      kv: {
+        type: double_array,
+        default_value: [30.0, 30.0, 30.0, 30.0, 10.0, 10.0, 5.0],
+        description: "Manipulator joint velocity error gains for PD control (size must be 7*num_robot)"
+      }
+    task_gains:
+      ik:
+        kp: {
+          type: double_array,
+          default_value: [10.0, 10.0, 10.0, 30.0, 30.0, 30.0],
+          description: "Task space position error gains for IK (CLIK/QPIK) control (size must be 6)"
+        }
+      id: 
+        kp: {
+          type: double_array,
+          default_value: [600.0, 600.0, 600.0, 1000.0, 1000.0, 1000.0],
+          description: "Task space position error gains for ID (OSF/QPID) control (size must be 6)"
+        }
+        kv: {
+          type: double_array,
+          default_value: [20.0, 20.0, 20.0, 30.0, 30.0, 30.0],
+          description: "Task space velocity error gains for ID (OSF/QPID) control (size must be 6)"
+        }
+    QPIK_weight:
+      tracking:
+        weights: {
+            type: double_array,
+            default_value: [10.0, 10.0, 10.0, 40.0, 40.0, 40.0],
+            description: "Weight for track given task space velocity (size must be 6)"
+          }
+      joint:
+        velocity:
+          manipulator: {
+              type: double_array,
+              default_value: [0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01],
+              description: "Weight for damping manipulator joint velocity (size must be 7 * num_robot)"
+            }
+        acceleration:
+          manipulator: {
+              type: double_array,
+              default_value: [0.00001, 0.00001, 0.00001, 0.00001, 0.00001, 0.00001, 0.00001],
+              description: "Weight for damping manipulator joint acceleration (size must be 7 * num_robot)"
+            }
+    QPID_weight:
+      tracking:
+        weights: {
+            type: double_array,
+            default_value: [10.0, 10.0, 10.0, 1.0, 1.0, 1.0],
+            description: "Weight for track given task space velocity (size must be 6)"
+          }
+      joint:
+        velocity:
+          manipulator: {
+              type: double_array,
+              default_value: [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
+              description: "Weight for damping manipulator joint velocity (size must be 7 * num_robot)"
+            }
+        acceleration:
+          manipulator: {
+              type: double_array,
+              default_value: [5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0],
+              description: "Weight for damping manipulator joint acceleration (size must be 7 * num_robot)"
+            }

@@ -1,0 +1,374 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="fr3">
+
+    <xacro:include filename="$(find franka_description)/robots/common/franka_arm.srdf.xacro"/>
+
+    <!-- ============================================================= -->
+    <!-- Which arm: left or right -->
+    <xacro:arg name="side" default="left"/>
+
+    <!-- Should an end-effector be mounted at the flange? -->
+    <xacro:arg name="hand" default="true" />
+
+    <!-- Is base husky or just box-shaped? -->
+    <xacro:arg name="mobile" default="false"/>
+
+    <!-- Should self-collision be enabled? -->
+    <xacro:arg name="with_sc" default="false" />
+    <!-- ============================================================= -->
+
+    <!-- Derived arm_prefix from side -->
+    <xacro:property name="arm_prefix" value="$(arg side)"/>
+
+    <xacro:property name="modified_prefix"
+                    value="${arm_prefix + '_' if arm_prefix else ''}"/>
+
+    <xacro:franka_arm_srdf arm_id="fr3"
+                           hand="$(arg hand)"
+                           ee_id="franka_hand"
+                           no_prefix="false"
+                           arm_prefix="${modified_prefix}">
+    </xacro:franka_arm_srdf>
+
+    <xacro:if value="$(arg with_sc)">
+        <disable_collisions link1="${modified_prefix}fr3_link0" link2="${modified_prefix}fr3_link0_sc" reason="Adjacant"/>
+        <disable_collisions link1="${modified_prefix}fr3_link0" link2="${modified_prefix}fr3_link1_sc" reason="Default"/>
+        <disable_collisions link1="${modified_prefix}fr3_link0" link2="${modified_prefix}fr3_link2_sc" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link0" link2="${modified_prefix}fr3_link3_sc" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link0" link2="${modified_prefix}fr3_link4_sc" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link0" link2="${modified_prefix}fr3_link5_sc" reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link0" link2="${modified_prefix}fr3_link6_sc" reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link0" link2="${modified_prefix}fr3_link7_sc" reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link0" link2="${modified_prefix}fr3_link5"    reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link0" link2="${modified_prefix}fr3_link6"    reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link0" link2="${modified_prefix}fr3_link7"    reason="User"/>
+        
+        <disable_collisions link1="${modified_prefix}fr3_link1" link2="${modified_prefix}fr3_link0_sc" reason="Default"/>
+        <disable_collisions link1="${modified_prefix}fr3_link1" link2="${modified_prefix}fr3_link1_sc" reason="Adjacant"/>
+        <disable_collisions link1="${modified_prefix}fr3_link1" link2="${modified_prefix}fr3_link2_sc" reason="Default"/>
+        <disable_collisions link1="${modified_prefix}fr3_link1" link2="${modified_prefix}fr3_link3_sc" reason="Default"/>
+        <disable_collisions link1="${modified_prefix}fr3_link1" link2="${modified_prefix}fr3_link4_sc" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link1" link2="${modified_prefix}fr3_link5_sc" reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link1" link2="${modified_prefix}fr3_link6_sc" reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link1" link2="${modified_prefix}fr3_link7_sc" reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link1" link2="${modified_prefix}fr3_link5"    reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link1" link2="${modified_prefix}fr3_link6"    reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link1" link2="${modified_prefix}fr3_link7"    reason="User"/>
+        
+        <disable_collisions link1="${modified_prefix}fr3_link1_sc" link2="${modified_prefix}fr3_link0_sc" reason="Default"/>
+
+        <disable_collisions link1="${modified_prefix}fr3_link2" link2="${modified_prefix}fr3_link0_sc" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link2" link2="${modified_prefix}fr3_link1_sc" reason="Default"/>
+        <disable_collisions link1="${modified_prefix}fr3_link2" link2="${modified_prefix}fr3_link2_sc" reason="Adjacant"/>
+        <disable_collisions link1="${modified_prefix}fr3_link2" link2="${modified_prefix}fr3_link3_sc" reason="Default"/>
+        <disable_collisions link1="${modified_prefix}fr3_link2" link2="${modified_prefix}fr3_link4_sc" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link2" link2="${modified_prefix}fr3_link5_sc" reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link2" link2="${modified_prefix}fr3_link6_sc" reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link2" link2="${modified_prefix}fr3_link7_sc" reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link2" link2="${modified_prefix}fr3_link5"    reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link2" link2="${modified_prefix}fr3_link6"    reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link2" link2="${modified_prefix}fr3_link7"    reason="User"/>
+        
+        <disable_collisions link1="${modified_prefix}fr3_link2_sc" link2="${modified_prefix}fr3_link0_sc" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link2_sc" link2="${modified_prefix}fr3_link1_sc" reason="Default"/>
+
+        <disable_collisions link1="${modified_prefix}fr3_link3" link2="${modified_prefix}fr3_link0_sc"     reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link3" link2="${modified_prefix}fr3_link1_sc"     reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link3" link2="${modified_prefix}fr3_link2_sc"     reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link3" link2="${modified_prefix}fr3_link3_sc"     reason="Adjacant"/>
+        <disable_collisions link1="${modified_prefix}fr3_link3" link2="${modified_prefix}fr3_link4_sc"     reason="Default"/>
+        <disable_collisions link1="${modified_prefix}fr3_link3" link2="${modified_prefix}fr3_link5_sc"     reason="Default"/>
+        <disable_collisions link1="${modified_prefix}fr3_link3" link2="${modified_prefix}fr3_link6_sc"     reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link3" link2="${modified_prefix}fr3_link7_sc"     reason="Never"/>
+
+        <disable_collisions link1="${modified_prefix}fr3_link3_sc" link2="${modified_prefix}fr3_link0_sc" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link3_sc" link2="${modified_prefix}fr3_link1_sc" reason="Default"/>
+        <disable_collisions link1="${modified_prefix}fr3_link3_sc" link2="${modified_prefix}fr3_link2_sc" reason="Default"/>
+
+        <disable_collisions link1="${modified_prefix}fr3_link4" link2="${modified_prefix}fr3_link0_sc" reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link4" link2="${modified_prefix}fr3_link1_sc" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link4" link2="${modified_prefix}fr3_link2_sc" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link4" link2="${modified_prefix}fr3_link3_sc" reason="Default"/>
+        <disable_collisions link1="${modified_prefix}fr3_link4" link2="${modified_prefix}fr3_link4_sc" reason="Adjacant"/>
+        <disable_collisions link1="${modified_prefix}fr3_link4" link2="${modified_prefix}fr3_link5_sc" reason="Default"/>
+        <disable_collisions link1="${modified_prefix}fr3_link4" link2="${modified_prefix}fr3_link6_sc" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link4" link2="${modified_prefix}fr3_link7_sc" reason="Never"/>
+
+        <disable_collisions link1="${modified_prefix}fr3_link4_sc" link2="${modified_prefix}fr3_link0_sc" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link4_sc" link2="${modified_prefix}fr3_link1_sc" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link4_sc" link2="${modified_prefix}fr3_link2_sc" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link4_sc" link2="${modified_prefix}fr3_link3_sc" reason="Default"/>
+
+        <disable_collisions link1="${modified_prefix}fr3_link5" link2="${modified_prefix}fr3_link0_sc" reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link5" link2="${modified_prefix}fr3_link1_sc" reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link5" link2="${modified_prefix}fr3_link2_sc" reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link5" link2="${modified_prefix}fr3_link3_sc" reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link5" link2="${modified_prefix}fr3_link4_sc" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link5" link2="${modified_prefix}fr3_link5_sc" reason="Adjacant"/>
+        <disable_collisions link1="${modified_prefix}fr3_link5" link2="${modified_prefix}fr3_link6_sc" reason="Default"/>
+        <disable_collisions link1="${modified_prefix}fr3_link5" link2="${modified_prefix}fr3_link7_sc" reason="Default"/>
+
+        <disable_collisions link1="${modified_prefix}fr3_link5_sc" link2="${modified_prefix}fr3_link3_sc" reason="User"/> <!-- for real robot, they never collide-->
+        <disable_collisions link1="${modified_prefix}fr3_link5_sc" link2="${modified_prefix}fr3_link4_sc" reason="Default"/>
+
+        <disable_collisions link1="${modified_prefix}fr3_link6" link2="${modified_prefix}fr3_link0_sc" reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link6" link2="${modified_prefix}fr3_link1_sc" reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link6" link2="${modified_prefix}fr3_link2_sc" reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link6" link2="${modified_prefix}fr3_link3_sc" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link6" link2="${modified_prefix}fr3_link4_sc" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link6" link2="${modified_prefix}fr3_link5_sc" reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link6" link2="${modified_prefix}fr3_link6_sc" reason="Adjacant"/>
+        <disable_collisions link1="${modified_prefix}fr3_link6" link2="${modified_prefix}fr3_link7_sc" reason="Default"/>
+
+        <disable_collisions link1="${modified_prefix}fr3_link6_sc" link2="${modified_prefix}fr3_link3_sc" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link6_sc" link2="${modified_prefix}fr3_link4_sc" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link6_sc" link2="${modified_prefix}fr3_link5_sc" reason="Default"/>
+
+        <disable_collisions link1="${modified_prefix}fr3_link7" link2="${modified_prefix}fr3_link0_sc" reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link7" link2="${modified_prefix}fr3_link1_sc" reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link7" link2="${modified_prefix}fr3_link2_sc" reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link7" link2="${modified_prefix}fr3_link3_sc" reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link7" link2="${modified_prefix}fr3_link4_sc" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link7" link2="${modified_prefix}fr3_link5_sc" reason="User"/>
+        <disable_collisions link1="${modified_prefix}fr3_link7" link2="${modified_prefix}fr3_link6_sc" reason="Default"/>
+        <disable_collisions link1="${modified_prefix}fr3_link7" link2="${modified_prefix}fr3_link7_sc" reason="Adjacant"/>
+
+        <disable_collisions link1="${modified_prefix}fr3_link7_sc" link2="${modified_prefix}fr3_link3_sc" reason="User"/> <!-- for real robot, they never collide-->
+        <disable_collisions link1="${modified_prefix}fr3_link7_sc" link2="${modified_prefix}fr3_link4_sc" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link7_sc" link2="${modified_prefix}fr3_link5_sc" reason="User"/> <!-- for real robot, they never collide-->
+        <disable_collisions link1="${modified_prefix}fr3_link7_sc" link2="${modified_prefix}fr3_link6_sc" reason="Default"/>
+
+        
+        <xacro:if value="$(arg hand)">
+            <disable_collisions link1="${modified_prefix}fr3_link0" link2="${modified_prefix}fr3_hand_sc"     reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link0" link2="${modified_prefix}fr3_hand"        reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link0" link2="${modified_prefix}fr3_leftfinger"  reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link0" link2="${modified_prefix}fr3_rightfinger" reason="User"/>
+
+            <disable_collisions link1="${modified_prefix}fr3_link1" link2="${modified_prefix}fr3_hand_sc"     reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link1" link2="${modified_prefix}fr3_hand"        reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link1" link2="${modified_prefix}fr3_leftfinger"  reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link1" link2="${modified_prefix}fr3_rightfinger" reason="User"/>
+
+            <disable_collisions link1="${modified_prefix}fr3_link2" link2="${modified_prefix}fr3_hand_sc"     reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link2" link2="${modified_prefix}fr3_hand"        reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link2" link2="${modified_prefix}fr3_leftfinger"  reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link2" link2="${modified_prefix}fr3_rightfinger" reason="User"/>
+
+            <disable_collisions link1="${modified_prefix}fr3_link3" link2="${modified_prefix}fr3_hand_sc"      reason="Never"/>
+
+            <disable_collisions link1="${modified_prefix}fr3_link4" link2="${modified_prefix}fr3_hand_sc"  reason="Never"/>
+
+            <disable_collisions link1="${modified_prefix}fr3_link5" link2="${modified_prefix}fr3_hand"        reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link5" link2="${modified_prefix}fr3_leftfinger"  reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link5" link2="${modified_prefix}fr3_rightfinger" reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link5" link2="${modified_prefix}fr3_hand_sc"  reason="Never"/>
+
+            <disable_collisions link1="${modified_prefix}fr3_link6" link2="${modified_prefix}fr3_hand_sc"  reason="Never"/>
+            
+            <disable_collisions link1="${modified_prefix}fr3_link7" link2="${modified_prefix}fr3_hand_sc"  reason="Default"/>
+
+            <disable_collisions link1="${modified_prefix}fr3_hand" link2="${modified_prefix}fr3_link0_sc" reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_hand" link2="${modified_prefix}fr3_link1_sc" reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_hand" link2="${modified_prefix}fr3_link2_sc" reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_hand" link2="${modified_prefix}fr3_link3_sc" reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_hand" link2="${modified_prefix}fr3_link4_sc" reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_hand" link2="${modified_prefix}fr3_link5_sc" reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_hand" link2="${modified_prefix}fr3_link6_sc" reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_hand" link2="${modified_prefix}fr3_link7_sc" reason="Default"/>
+            <disable_collisions link1="${modified_prefix}fr3_hand" link2="${modified_prefix}fr3_hand_sc"  reason="Adjacant"/>
+
+            <disable_collisions link1="${modified_prefix}fr3_hand_sc" link2="${modified_prefix}fr3_link4_sc" reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_hand_sc" link2="${modified_prefix}fr3_link6_sc" reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_hand_sc" link2="${modified_prefix}fr3_link7_sc" reason="Default"/>
+
+            <disable_collisions link1="${modified_prefix}fr3_leftfinger" link2="${modified_prefix}fr3_link0_sc" reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_leftfinger" link2="${modified_prefix}fr3_link1_sc" reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_leftfinger" link2="${modified_prefix}fr3_link2_sc" reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_leftfinger" link2="${modified_prefix}fr3_link3_sc" reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_leftfinger" link2="${modified_prefix}fr3_link4_sc" reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_leftfinger" link2="${modified_prefix}fr3_link5_sc" reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_leftfinger" link2="${modified_prefix}fr3_link6_sc" reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_leftfinger" link2="${modified_prefix}fr3_link7_sc" reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_leftfinger" link2="${modified_prefix}fr3_hand_sc"  reason="Default"/>
+
+            <disable_collisions link1="${modified_prefix}fr3_rightfinger" link2="${modified_prefix}fr3_link0_sc" reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_rightfinger" link2="${modified_prefix}fr3_link1_sc" reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_rightfinger" link2="${modified_prefix}fr3_link2_sc" reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_rightfinger" link2="${modified_prefix}fr3_link3_sc" reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_rightfinger" link2="${modified_prefix}fr3_link4_sc" reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_rightfinger" link2="${modified_prefix}fr3_link5_sc" reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_rightfinger" link2="${modified_prefix}fr3_link6_sc" reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_rightfinger" link2="${modified_prefix}fr3_link7_sc" reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_rightfinger" link2="${modified_prefix}fr3_hand_sc"  reason="Default"/>
+        </xacro:if>
+    </xacro:if>
+
+    <!-- box shaped table as base for the Single FR3 -->
+    <xacro:unless value="$(arg mobile)">
+        <disable_collisions link1="base" link2="${modified_prefix}fr3_link0" reason="Adjacent"/>
+        <disable_collisions link1="base" link2="${modified_prefix}fr3_link1" reason="Never"/>
+        <disable_collisions link1="base" link2="${modified_prefix}fr3_link2" reason="Never"/>
+        <disable_collisions link1="base" link2="${modified_prefix}fr3_link3" reason="Never"/>
+        <disable_collisions link1="base" link2="${modified_prefix}fr3_link4" reason="Never"/>
+        
+        <xacro:if value="$(arg with_sc)">
+            <disable_collisions link1="base" link2="${modified_prefix}fr3_link5"    reason="User"/>
+            <disable_collisions link1="base" link2="${modified_prefix}fr3_link6"    reason="User"/>
+            <disable_collisions link1="base" link2="${modified_prefix}fr3_link7"    reason="User"/>
+            <disable_collisions link1="base" link2="${modified_prefix}fr3_link0_sc" reason="Default"/>
+            <disable_collisions link1="base" link2="${modified_prefix}fr3_link1_sc" reason="Default"/>
+            <disable_collisions link1="base" link2="${modified_prefix}fr3_link2_sc" reason="Never"/>
+            <disable_collisions link1="base" link2="${modified_prefix}fr3_link3_sc" reason="Never"/>
+            <disable_collisions link1="base" link2="${modified_prefix}fr3_link4_sc" reason="Never"/>
+
+            <xacro:if value="$(arg hand)">
+                <disable_collisions link1="base" link2="${modified_prefix}fr3_hand"        reason="User"/>
+                <disable_collisions link1="base" link2="${modified_prefix}fr3_leftfinger"  reason="User"/>
+                <disable_collisions link1="base" link2="${modified_prefix}fr3_rightfinger" reason="User"/>
+            </xacro:if>
+        </xacro:if>
+    </xacro:unless>
+
+    <!-- Husky shaped table as base for the Single FR3 -->
+    <xacro:if value="$(arg mobile)">
+        <disable_collisions link1="${modified_prefix}fr3_link0" link2="front_left_wheel" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link0" link2="front_right_wheel" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link0" link2="mobile_base" reason="Adjacent"/>
+        <disable_collisions link1="${modified_prefix}fr3_link0" link2="rear_left_wheel" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link0" link2="rear_right_wheel" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link0" link2="top_structure_link" reason="Default"/>
+        <disable_collisions link1="${modified_prefix}fr3_link1" link2="front_left_wheel" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link1" link2="front_right_wheel" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link1" link2="mobile_base" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link1" link2="rear_left_wheel" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link1" link2="rear_right_wheel" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link1" link2="top_structure_link" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link2" link2="front_left_wheel" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link2" link2="front_right_wheel" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link2" link2="mobile_base" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link2" link2="rear_left_wheel" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link2" link2="rear_right_wheel" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link2" link2="top_structure_link" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link3" link2="mobile_base" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link3" link2="rear_left_wheel" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link3" link2="rear_right_wheel" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link3" link2="top_structure_link" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link4" link2="mobile_base" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link4" link2="rear_left_wheel" reason="Never"/>
+        <disable_collisions link1="${modified_prefix}fr3_link4" link2="rear_right_wheel" reason="Never"/>
+        <disable_collisions link1="front_left_wheel" link2="front_right_wheel" reason="Never"/>
+        <disable_collisions link1="front_left_wheel" link2="mobile_base" reason="Adjacent"/>
+        <disable_collisions link1="front_left_wheel" link2="rear_left_wheel" reason="Never"/>
+        <disable_collisions link1="front_left_wheel" link2="rear_right_wheel" reason="Never"/>
+        <disable_collisions link1="front_left_wheel" link2="top_structure_link" reason="Never"/>
+        <disable_collisions link1="front_right_wheel" link2="mobile_base" reason="Adjacent"/>
+        <disable_collisions link1="front_right_wheel" link2="rear_left_wheel" reason="Never"/>
+        <disable_collisions link1="front_right_wheel" link2="rear_right_wheel" reason="Never"/>
+        <disable_collisions link1="front_right_wheel" link2="top_structure_link" reason="Never"/>
+        <disable_collisions link1="mobile_base" link2="rear_left_wheel" reason="Adjacent"/>
+        <disable_collisions link1="mobile_base" link2="rear_right_wheel" reason="Adjacent"/>
+        <disable_collisions link1="mobile_base" link2="top_structure_link" reason="Adjacent"/>
+        <disable_collisions link1="rear_left_wheel" link2="rear_right_wheel" reason="Never"/>
+        <disable_collisions link1="rear_left_wheel" link2="top_structure_link" reason="Never"/>
+        <disable_collisions link1="rear_right_wheel" link2="top_structure_link" reason="Never"/>
+
+        <xacro:if value="$(arg with_sc)">
+            
+
+            <disable_collisions link1="${modified_prefix}fr3_link0_sc" link2="front_left_wheel"  reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_link0_sc" link2="front_right_wheel" reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_link0_sc" link2="rear_left_wheel"   reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_link0_sc" link2="rear_right_wheel"  reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_link0_sc" link2="mobile_base"       reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_link0_sc" link2="top_structure_link"       reason="Default"/>
+
+            <disable_collisions link1="${modified_prefix}fr3_link1_sc" link2="front_left_wheel"  reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_link1_sc" link2="front_right_wheel" reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_link1_sc" link2="rear_left_wheel"   reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_link1_sc" link2="rear_right_wheel"  reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_link1_sc" link2="mobile_base"       reason="Default"/>
+            <disable_collisions link1="${modified_prefix}fr3_link1_sc" link2="top_structure_link"       reason="Default"/>
+
+            <disable_collisions link1="${modified_prefix}fr3_link2_sc" link2="front_left_wheel"  reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_link2_sc" link2="front_right_wheel" reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_link2_sc" link2="rear_left_wheel"   reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_link2_sc" link2="rear_right_wheel"  reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_link2_sc" link2="mobile_base"       reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_link2_sc" link2="top_structure_link"       reason="Never"/>
+
+            <disable_collisions link1="${modified_prefix}fr3_link3" link2="front_left_wheel"  reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link3" link2="front_right_wheel" reason="User"/>
+
+            <disable_collisions link1="${modified_prefix}fr3_link3_sc" link2="front_left_wheel"  reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_link3_sc" link2="front_right_wheel" reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_link3_sc" link2="rear_left_wheel"   reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_link3_sc" link2="rear_right_wheel"  reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_link3_sc" link2="mobile_base"       reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_link3_sc" link2="top_structure_link"       reason="Never"/>
+
+            <disable_collisions link1="${modified_prefix}fr3_link4" link2="front_left_wheel"  reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link4" link2="front_right_wheel" reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link4" link2="top_structure_link"       reason="User"/>
+
+
+            <disable_collisions link1="${modified_prefix}fr3_link4_sc" link2="front_left_wheel"  reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_link4_sc" link2="front_right_wheel" reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_link4_sc" link2="rear_left_wheel"   reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_link4_sc" link2="rear_right_wheel"  reason="Never"/>
+            <disable_collisions link1="${modified_prefix}fr3_link4_sc" link2="mobile_base"       reason="Never"/>
+            <!-- <disable_collisions link1="${modified_prefix}fr3_link4_sc" link2="top_structure_link"       reason="Never"/> --> <!-- for real robot, they collide-->
+
+            <disable_collisions link1="${modified_prefix}fr3_link5" link2="front_left_wheel"  reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link5" link2="front_right_wheel" reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link5" link2="rear_left_wheel"   reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link5" link2="rear_right_wheel"  reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link5" link2="mobile_base"       reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link5" link2="top_structure_link"       reason="User"/>
+            
+            <!-- <disable_collisions link1="${modified_prefix}fr3_link5_sc" link2="rear_left_wheel"  reason="User"/>  --> <!-- for real robot, they collide-->
+
+            <disable_collisions link1="${modified_prefix}fr3_link6" link2="front_left_wheel"  reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link6" link2="front_right_wheel" reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link6" link2="rear_left_wheel"   reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link6" link2="rear_right_wheel"  reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link6" link2="mobile_base"       reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link6" link2="top_structure_link"       reason="User"/>
+
+            <disable_collisions link1="${modified_prefix}fr3_link7" link2="front_left_wheel"  reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link7" link2="front_right_wheel" reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link7" link2="rear_left_wheel"   reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link7" link2="rear_right_wheel"  reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link7" link2="mobile_base"       reason="User"/>
+            <disable_collisions link1="${modified_prefix}fr3_link7" link2="top_structure_link"       reason="User"/>
+            
+
+
+            <xacro:if value="$(arg hand)">
+                <disable_collisions link1="${modified_prefix}fr3_hand" link2="front_left_wheel"  reason="User"/>
+                <disable_collisions link1="${modified_prefix}fr3_hand" link2="front_right_wheel" reason="User"/>
+                <disable_collisions link1="${modified_prefix}fr3_hand" link2="rear_left_wheel"   reason="User"/>
+                <disable_collisions link1="${modified_prefix}fr3_hand" link2="rear_right_wheel"  reason="User"/>
+                <disable_collisions link1="${modified_prefix}fr3_hand" link2="mobile_base"       reason="User"/>
+                <disable_collisions link1="${modified_prefix}fr3_hand" link2="top_structure_link"       reason="User"/>
+
+                <disable_collisions link1="${modified_prefix}fr3_leftfinger" link2="front_left_wheel"  reason="User"/>
+                <disable_collisions link1="${modified_prefix}fr3_leftfinger" link2="front_right_wheel" reason="User"/>
+                <disable_collisions link1="${modified_prefix}fr3_leftfinger" link2="rear_left_wheel"   reason="User"/>
+                <disable_collisions link1="${modified_prefix}fr3_leftfinger" link2="rear_right_wheel"  reason="User"/>
+                <disable_collisions link1="${modified_prefix}fr3_leftfinger" link2="mobile_base"       reason="User"/>
+                <disable_collisions link1="${modified_prefix}fr3_leftfinger" link2="top_structure_link"       reason="User"/>
+
+                <disable_collisions link1="${modified_prefix}fr3_rightfinger" link2="front_left_wheel"   reason="User"/>
+                <disable_collisions link1="${modified_prefix}fr3_rightfinger" link2="front_right_wheel"  reason="User"/>
+                <disable_collisions link1="${modified_prefix}fr3_rightfinger" link2="rear_left_wheel"    reason="User"/>
+                <disable_collisions link1="${modified_prefix}fr3_rightfinger" link2="rear_right_wheel"   reason="User"/>
+                <disable_collisions link1="${modified_prefix}fr3_rightfinger" link2="mobile_base"        reason="User"/>
+                <disable_collisions link1="${modified_prefix}fr3_rightfinger" link2="top_structure_link" reason="User"/>
+            </xacro:if>
+        </xacro:if>
+    </xacro:if>
+
+    
+
+</robot>

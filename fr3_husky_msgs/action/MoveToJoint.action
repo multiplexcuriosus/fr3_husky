@@ -1,0 +1,19 @@
+# Goal: move a set of joints to target positions using MoveIt2 planning
+string[] joint_names                      # e.g., ["left_fr3_joint1", "left_fr3_joint3"]
+float64[] target_positions                # target joint angles [rad], same size as joint_names
+float64 max_velocity_scaling_factor       # 0.0 → use default (0.1)
+float64 max_acceleration_scaling_factor   # 0.0 → use default (0.1)
+---
+# Result
+bool    success
+string  message
+int32   error_code   # 0 = OK, negative = error (see constants below)
+int32 ERROR_PLAN_FAILED=-1
+int32 ERROR_CTRL_UNAVAILABLE=-2
+int32 ERROR_GOAL_REJECTED=-3
+int32 ERROR_EXEC_FAILED=-4
+---
+# Feedback
+int32   state            # 0 = PLANNING, 1 = EXECUTING
+float64 progress         # 0.0 – 1.0
+string  status_message

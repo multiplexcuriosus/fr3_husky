@@ -1,0 +1,10 @@
+# Define the goal
+bool use_qp  # true: enable gravity-comp mode with QPID, false: only gravity-comp
+
+---
+# Define the result
+bool is_completed
+---
+# Define a feedback message
+bool is_qp_solved
+string time_verbose

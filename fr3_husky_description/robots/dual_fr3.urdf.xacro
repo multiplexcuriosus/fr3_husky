@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="fr3">
+    <xacro:include filename="$(find franka_description)/robots/common/franka_multi_robot.xacro"/>
+
+    <!-- base xacro includes -->
+    <xacro:include filename="$(find fr3_husky_description)/robots/box_base.xacro"/>
+    <xacro:include filename="$(find fr3_husky_description)/robots/husky_base.xacro"/>
+
+    <!-- ============================================================= -->
+    <!-- Should an end-effector be mounted at the flange? -->
+    <xacro:arg name="hand" default="true" />
+
+    <!-- Should self-collision be enabled? -->
+    <xacro:arg name="with_sc" default="false" />
+
+    <!-- Is the robot being controlled with ros2_control?" -->
+    <xacro:arg name="ros2_control" default="false" />
+
+    <xacro:arg name="use_mujoco" default="false" />
+
+    <!-- Should a fake hardware be used? -->
+    <xacro:arg name="use_fake_hardware" default="false" />
+
+    <!-- Should fake sensors be used? -->
+    <xacro:arg name="fake_sensor_commands" default="false" />
+
+    <!-- Is base husky or just box-shaped? -->
+    <xacro:arg name="mobile" default="false"/>
+
+    <!-- Use franka hand finger joint as fixed? -->
+    <xacro:arg name="fix_finger" default="false"/>
+    <!-- ============================================================= -->
+
+    <xacro:arg name="robot_ips" default="['172.16.5.5','172.16.6.6']" />
+    <xacro:property name="robot_ips_list" value="${$(arg robot_ips)}" />
+    <xacro:property name="robot_ips_str" value="${' '.join(robot_ips_list)}" />
+
+    <xacro:property name="arm_ids_str" value="fr3 fr3" />
+    <xacro:property name="robot_prefixes_list" value="${['left','right']}" />
+    <xacro:property name="robot_prefixes_str" value="${' '.join(robot_prefixes_list)}" />
+
+    <xacro:property name="xyzs_str"
+                    value="${'0 0.215 0;0 -0.215 0' if '$(arg mobile)' == 'true' else '0 0.34 0;0 -0.34 0'}" />
+    <xacro:property name="rpys_str"
+                    value="${'0 0 0.523598776;0 0 -0.523598776' if '$(arg mobile)' == 'true' else '0 0 0;0 0 0'}" />
+
+    <xacro:if value="$(arg mobile)">
+        <xacro:husky_base single_mani="false"/>
+    </xacro:if>
+
+    <xacro:unless value="$(arg mobile)">
+        <link name="base"/>
+        <xacro:box_base no_prefix="false" base_prefix="left_"/>
+        <xacro:box_base no_prefix="false" base_prefix="right_"/>
+
+        <joint name="tmp_left_base_joint" type="fixed">
+            <parent link="base"/>
+            <child link="left_base"/>
+            <origin rpy="0 0 0" xyz="0 0.34 0"/>
+        </joint>
+        <joint name="tmp_right_base_joint" type="fixed">
+            <parent link="base"/>
+            <child link="right_base"/>
+            <origin rpy="0 0 0" xyz="0 -0.34 0"/>
+        </joint>
+    </xacro:unless>
+
+    <joint name="tmp_base_joint" type="fixed">
+        <parent link="base"/>
+        <child link="tmp_base"/>
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+    </joint>
+
+    <xacro:franka_multi_robot
+        arm_ids="${arm_ids_str}"
+        robot_ips="${robot_ips_str}"
+        robot_prefixes="${robot_prefixes_str}"
+        xyzs="${xyzs_str}"
+        rpys="${rpys_str}"
+        joint_limits="${xacro.load_yaml('$(find franka_description)/robots/fr3/joint_limits.yaml')}"
+        inertials="${xacro.load_yaml('$(find franka_description)/robots/fr3/inertials.yaml')}"
+        kinematics="${xacro.load_yaml('$(find franka_description)/robots/fr3/kinematics.yaml')}"
+        accelerometer_config="${xacro.load_yaml('$(find franka_description)/robots/fr3/accelerometers.yaml')}"
+        dynamics="${xacro.load_yaml('$(find franka_description)/robots/fr3/dynamics.yaml')}"
+        gazebo="false"
+        hand="$(arg hand)"
+        ee_id="franka_hand"
+        special_connection=""
+        xyz_ee="0 0 0"
+        rpy_ee="0 0 ${-pi/4}"
+        tcp_xyz="0 0 0.1034"
+        tcp_rpy="0 0 0"
+        safety_distance="0.015"
+        with_sc="$(arg with_sc)"
+        ros2_control="$(arg ros2_control)"
+        use_mujoco="$(arg use_mujoco)"
+        use_fake_hardware="$(arg use_fake_hardware)"
+        fake_sensor_commands="$(arg fake_sensor_commands)"
+        gazebo_effort="false"
+        connected_to="tmp_base"
+        fix_finger="$(arg fix_finger)"
+    />
+
+</robot>

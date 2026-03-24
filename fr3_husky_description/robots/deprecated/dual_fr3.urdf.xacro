@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="dual_fr3">
+    <xacro:include filename="$(find franka_description)/robots/common/franka_robot.xacro"/>
+
+    <!-- base xacro includes -->
+    <xacro:include filename="$(find fr3_husky_description)/robots/box_base.xacro"/>
+    <xacro:include filename="$(find fr3_husky_description)/robots/husky_base.xacro"/>
+
+    <!-- ============================================================= -->
+    
+    <!-- Should an end-effector be mounted at the flange? -->
+    <xacro:arg name="hand" default="true" />
+
+    <!-- Should self-collision be enabled? -->
+    <xacro:arg name="with_sc" default="false" />
+
+    <!-- Is the robot being controlled with ros2_control?" -->
+    <xacro:arg name="ros2_control" default="true" />
+
+    <!-- Should a fake hardware be used? -->
+    <xacro:arg name="use_fake_hardware" default="false" />
+
+    <!-- Should fake sensors be used? -->
+    <xacro:arg name="fake_sensor_commands" default="false" />
+
+    <!-- Is base husky or just box-shaped? -->
+    <xacro:arg name="mobile" default="false"/>
+    <!-- ============================================================= -->
+
+    <xacro:arg name="robot_ips" default="['172.16.5.5','172.16.6.6']" />
+    <xacro:property name="robot_ips_list" value="${$(arg robot_ips)}" />
+    <xacro:property name="number_of_robots" value = "2"/>
+    <xacro:property name="arm_prefixes_list" value="${['left','right']}" />
+    
+
+    <xacro:if value="$(arg mobile)">
+        <xacro:husky_base single_mani="false"/>
+    </xacro:if>
+
+    <xacro:macro name="loop" params="i">
+        <xacro:unless value="${i == number_of_robots}">
+
+            <xacro:property name="robot_prefix" value="${arm_prefixes_list[i]}"/>
+            <xacro:property name="modified_prefix" value="${robot_prefix + '_' if robot_prefix else ''}"/>
+
+            <xacro:if value="$(arg mobile)">
+                <xacro:if value="${robot_prefix == 'left'}">
+                    <joint name="${modified_prefix}base_joint" type="fixed">
+                        <parent link="base"/>
+                        <child link="tmp_${modified_prefix}base"/>
+                        <origin rpy="0 0 0.523598776" xyz="0 0.215 0"/>
+                    </joint>
+                </xacro:if>
+                <xacro:if value="${robot_prefix == 'right'}">
+                    <joint name="${modified_prefix}base_joint" type="fixed">
+                        <parent link="base"/>
+                        <child link="tmp_${modified_prefix}base"/>
+                        <origin rpy="0 0 -0.523598776" xyz="0 -0.215 0"/>
+                    </joint>
+                </xacro:if>
+            </xacro:if>
+
+            <xacro:unless value="$(arg mobile)">
+                <xacro:box_base no_prefix="false" 
+                                base_prefix="${modified_prefix}"/>
+
+                <joint name="${modified_prefix}base_joint" type="fixed">
+                    <parent link="${modified_prefix}base"/>
+                    <child link="tmp_${modified_prefix}base"/>
+                    <origin rpy="0 0 0" xyz="0 0 0"/>
+                </joint>
+            </xacro:unless>
+
+            <xacro:franka_robot arm_id="fr3"
+                                joint_limits="${xacro.load_yaml('$(find franka_description)/robots/fr3/joint_limits.yaml')}"
+                                inertials="${xacro.load_yaml('$(find franka_description)/robots/fr3/inertials.yaml')}"
+                                kinematics="${xacro.load_yaml('$(find franka_description)/robots/fr3/kinematics.yaml')}"
+                                accelerometer_config="${xacro.load_yaml('$(find franka_description)/robots/fr3/accelerometers.yaml')}"
+                                dynamics="${xacro.load_yaml('$(find franka_description)/robots/fr3/dynamics.yaml')}"
+                                gazebo="false"
+                                hand="$(arg hand)"
+                                ee_id="franka_hand"
+                                special_connection=""
+                                xyz_ee="0 0 0"
+                                rpy_ee="0 0 ${-pi/4}"
+                                tcp_xyz="0 0 0.1034"
+                                tcp_rpy="0 0 0"
+                                safety_distance="0.03"
+                                with_sc="$(arg with_sc)"
+                                ros2_control="$(arg ros2_control)"
+                                robot_ip="${robot_ips_list[i]}"
+                                use_fake_hardware="$(arg use_fake_hardware)"
+                                fake_sensor_commands="$(arg fake_sensor_commands)"
+                                gazebo_effort="false"
+                                no_prefix="false"
+                                arm_prefix="${modified_prefix}"
+                                description_pkg="franka_description"
+                                connected_to="tmp_${modified_prefix}base">
+            </xacro:franka_robot>
+
+
+            <xacro:loop i="${i+1}"/>
+        </xacro:unless>
+    </xacro:macro>
+    <xacro:loop i="0"/>
+
+    <xacro:unless value="$(arg mobile)">
+        <link name="base"/>
+        <joint name="tmp_left_base_joint" type="fixed">
+            <parent link="base"/>
+            <child link="left_base"/>
+            <origin rpy="0 0 0" xyz="0 0.34 0"/>
+        </joint>
+        <joint name="tmp_right_base_joint" type="fixed">
+            <parent link="base"/>
+            <child link="right_base"/>
+            <origin rpy="0 0 0" xyz="0 -0.34 0"/>
+        </joint>
+    </xacro:unless>
+
+</robot>

@@ -1,0 +1,34 @@
+<library path="fr3_husky_controller">
+  <class name="fr3_husky_controller/FR3ActionController"
+         type="fr3_husky_controller::FR3ActionController"
+         base_class_type="controller_interface::ControllerInterface">
+    <description>
+      FR3 action controller.
+    </description>
+  </class>
+
+  <class name="fr3_husky_controller/FR3HuskyActionController"
+         type="fr3_husky_controller::FR3HuskyActionController"
+         base_class_type="controller_interface::ControllerInterface">
+    <description>
+      FR3 Husky action controller.
+    </description>
+  </class>
+
+
+  <class name="fr3_husky_controller/TestFr3Controller"
+         type="fr3_husky_controller::TestFr3Controller"
+         base_class_type="controller_interface::ControllerInterface">
+    <description>
+      TestFr3Controller controller.
+    </description>
+  </class>
+
+  <class name="fr3_husky_controller/TestFr3HuskyController"
+         type="fr3_husky_controller::TestFr3HuskyController"
+         base_class_type="controller_interface::ControllerInterface">
+    <description>
+      TestFr3HuskyController controller.
+    </description>
+  </class>
+</library>

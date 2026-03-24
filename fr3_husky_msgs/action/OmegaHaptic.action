@@ -1,0 +1,16 @@
+# Define the goal
+int8 mode 0                          # 0: CLIK, 1: OSF, 2:QPIK, 3:QPID (default: 0)
+string ee_name                       # EE name for tracking hapic twist 
+bool move_orientation False          # move EE orientation or not (default: False)
+float32 hapic_pos_multiplier 1.0     # multiplier for target position from haptic (default: 1.0)
+float32 hapic_ori_multiplier 1.0     # multiplier for target orientation from haptic (default: 1.0)
+float32 hapic_lin_vel_multiplier 1.0 # multiplier for target linear velocity from haptic (default: 1.0)
+float32 hapic_ang_vel_multiplier 1.0 # multiplier for target angular velocity from haptic (default: 1.0)
+
+---
+# Define the result
+bool is_completed
+---
+# Define a feedback message
+bool is_qp_solved
+string time_verbose

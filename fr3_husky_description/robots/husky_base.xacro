@@ -1,0 +1,187 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Husky-shaped base -->
+  <xacro:macro name="husky_base" params="single_mani:=true">
+    <link name="base"/>
+
+    <joint name="mobile_base_joint" type="fixed">
+      <parent link="base" />
+      <child link="mobile_base" />
+      <xacro:if value="${single_mani}">
+        <origin rpy="0 0 0" xyz="-0.36 0.0 -0.27"/>
+      </xacro:if>
+      <xacro:unless value="${single_mani}">
+        <origin rpy="0 0 0" xyz="-0.345 0.0 -0.26"/>
+      </xacro:unless>
+    </joint>
+
+    <link name="mobile_base">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://husky_description/meshes/base_link.dae" />
+        </geometry>
+      </visual>
+      <collision>
+        <origin rpy="0 0 0" xyz="0 0 0.061875"/>
+        <geometry>
+          <box size="0.9874 0.5709 0.12375"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin rpy="0 0 0" xyz="0 0 0.17562499999999998"/>
+        <geometry>
+          <box size="0.7899200000000001 0.5709 0.10375"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <link name="top_chassis_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://husky_description/meshes/top_chassis.dae" />
+        </geometry>
+      </visual>
+    </link>
+
+    <joint name="top_chassis_joint" type="fixed">
+      <parent link="mobile_base" />
+      <child link="top_chassis_link" />
+    </joint>
+
+    <link name="top_structure_link">
+      <inertial>
+        <origin rpy="0 0 0" xyz="-0.108 0 0.252"/>
+        <mass value="36.436"/>
+        <inertia ixx="6.35" ixy="0.001" ixz="1.711" iyy="7.648" iyz="-0.004" izz="3.775"/>
+      </inertial>
+      <visual>
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+        <geometry>
+          <xacro:if value="${single_mani}">
+            <mesh filename="package://fr3_husky_description/meshes/ROAS_structure_single.stl"/>
+          </xacro:if>
+          <xacro:unless value="${single_mani}">
+            <mesh filename="package://fr3_husky_description/meshes/ROAS_structure.stl"/>
+          </xacro:unless>
+        </geometry>
+        <material name="medium_grey">
+          <color rgba="0.6 0.6 0.6 1.0"/>
+        </material>
+      </visual>
+      <collision>
+        <origin rpy="0 0 0" xyz="0 0 0.006"/>
+        <geometry>
+          <box size="0.90 0.65 0.012"/>
+        </geometry>
+      </collision>
+      <xacro:if value="${single_mani}">
+          <collision>
+            <origin rpy="0 0 0" xyz="0.32 0 0.018"/>
+            <geometry>
+              <box size="0.25 0.35 0.01"/>
+            </geometry>
+          </collision>
+      </xacro:if>
+      <collision>
+        <origin rpy="0 0 0" xyz="-0.28 0 0.65"/>
+        <geometry>
+          <box size="0.32 0.56 1.3"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="top_structure_joint" type="fixed">
+      <parent link="mobile_base"/>
+      <child link="top_structure_link"/>
+      <origin rpy="0 0 0" xyz="0 0 0.248"/>
+    </joint>
+
+    <link name="front_left_wheel">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://husky_description/meshes/wheel.dae" />
+        </geometry>
+      </visual>
+      <collision>
+        <origin rpy="1.570795 0 0" xyz="0 0 0"/>
+        <geometry>
+          <cylinder length="0.1143" radius="0.1651"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="front_left_wheel_joint" type="fixed">
+      <parent link="mobile_base"/>
+      <child link="front_left_wheel"/>
+      <origin rpy="0 0 0" xyz="0.256 0.2775 0.03282"/>
+    </joint>
+
+    <link name="front_right_wheel">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://husky_description/meshes/wheel.dae" />
+        </geometry>
+      </visual>
+      <collision>
+        <origin rpy="1.570795 0 0" xyz="0 0 0"/>
+        <geometry>
+          <cylinder length="0.1143" radius="0.1651"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="front_right_wheel_joint" type="fixed">
+      <parent link="mobile_base"/>
+      <child link="front_right_wheel"/>
+      <origin rpy="0 0 0" xyz="0.256 -0.2775 0.03282"/>
+    </joint>
+
+    <link name="rear_left_wheel">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://husky_description/meshes/wheel.dae" />
+        </geometry>
+      </visual>
+      <collision>
+        <origin rpy="1.570795 0 0" xyz="0 0 0"/>
+        <geometry>
+          <cylinder length="0.1143" radius="0.1651"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="rear_left_wheel_joint" type="fixed">
+      <parent link="mobile_base"/>
+      <child link="rear_left_wheel"/>
+      <origin rpy="0 0 0" xyz="-0.256 0.2775 0.03282"/>
+    </joint>
+
+    <link name="rear_right_wheel">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://husky_description/meshes/wheel.dae" />
+        </geometry>
+      </visual>
+      <collision>
+        <origin rpy="1.570795 0 0" xyz="0 0 0"/>
+        <geometry>
+          <cylinder length="0.1143" radius="0.1651"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="rear_right_wheel_joint" type="fixed">
+      <parent link="mobile_base"/>
+      <child link="rear_right_wheel"/>
+      <origin rpy="0 0 0" xyz="-0.256 -0.2775 0.03282"/>
+    </joint>
+  </xacro:macro>
+
+</robot>

@@ -1,0 +1,235 @@
+fr3_husky_action_controller:
+  # FR3 
+  robot_name: {
+    type: string_array,
+    default_value: ["left", "right"],
+    description: "Robot name want to control (left/right)"
+  }
+  manipulator_joints: {
+    type: string_array,
+    default_value: [],
+    description: "Joint names of the manipulator system",
+    read_only: true,
+    validation: {
+      unique<>: null,
+      size_gt<>: [0],
+    }
+  }
+  manipulator_command_interface: {
+    type: string,
+    default_value: "effort",
+    description: "Command interface provided by the hardware interface for manipulator joints",
+    read_only: true,
+    validation: {
+      one_of<>: [["position", "velocity", "effort"]],
+    }
+  }
+  manipulator_state_interfaces: {
+    type: string_array,
+    default_value: [],
+    description: "State interfaces provided by the hardware for manipulator joints.",
+    read_only: true,
+    validation: {
+      unique<>: null,
+      size_gt<>: [0],
+      subset_of<>: [["position", "velocity", "effort",]],
+    }
+  }
+  # Husky
+  left_wheel_names: {
+    type: string_array,
+    default_value: [],
+    description: "Names of the left side wheels' joints",
+    validation: {
+      not_empty<>: []
+    }
+  }
+  right_wheel_names: {
+    type: string_array,
+    default_value: [],
+    description: "Names of the right side wheels' joints",
+    validation: {
+      not_empty<>: []
+    }
+  }
+  wheel_separation: {
+    type: double,
+    default_value: 0.0,
+    description: "Shortest distance between the left and right wheels. If this parameter is wrong, the robot will not behave correctly in curves.",
+    validation: {
+      gt<>: [0.0]
+    }
+  }
+  wheel_radius: {
+    type: double,
+    default_value: 0.0,
+    description: "Radius of a wheel, i.e., wheels size, used for transformation of linear velocity into wheel rotations. If this parameter is wrong the robot will move faster or slower than expected.",
+    validation: {
+      gt<>: [0.0]
+    }
+  }
+  wheel_separation_multiplier: {
+    type: double,
+    default_value: 1.0,
+    description: "Correction factor when the actual wheel separation differs from the nominal value in the ``wheel_separation`` parameter.",
+  }
+  wheel_radius_multiplier: {
+    type: double,
+    default_value: 1.0,
+    description: "Correction factor when radius of wheels differs from the nominal value in ``wheel_radius`` parameter.",
+  }
+  odom_frame_id: {
+    type: string,
+    default_value: "odom",
+    description:  "Name of the frame for odometry. This frame is parent of ``base_frame_id`` when controller publishes odometry.",
+  }
+  base_frame_id: {
+    type: string,
+    default_value: "base_link",
+    description: "Name of the robot's base frame that is child of the odometry frame.",
+  }
+  pose_covariance_diagonal: {
+    type: double_array,
+    default_value: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    description: "Odometry covariance for the encoder output of the robot for the pose. These values should be tuned to your robot's sample odometry data, but these values are a good place to start: ``[0.001, 0.001, 0.001, 0.001, 0.001, 0.01]``.",
+  }
+  twist_covariance_diagonal: {
+    type: double_array,
+    default_value: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    description: "Odometry covariance for the encoder output of the robot for the speed. These values should be tuned to your robot's sample odometry data, but these values are a good place to start: ``[0.001, 0.001, 0.001, 0.001, 0.001, 0.01]``.",
+  }
+  publish_rate: {
+    type: double,
+    default_value: 50.0, # Hz
+    description: "Publishing rate (Hz) of the odometry and TF messages.",
+  }
+  use_estop: {
+    type: bool,
+    default_value: false,
+    description: "Enable joystick-based e-stop for mobile wheel commands.",
+  }
+  estop_button_index: {
+    type: int,
+    default_value: 0,
+    description: "Joy message button index used for e-stop. While pressed, wheel commands are forced to zero.",
+  }
+  linear:
+    x:
+      max_velocity: {
+        type: double,
+        default_value: .NAN,
+      }
+      max_acceleration: {
+        type: double,
+        default_value: .NAN,
+      }
+      max_jerk: {
+        type: double,
+        default_value: .NAN,
+      }
+  angular:
+    z:
+      max_velocity: {
+        type: double,
+        default_value: .NAN,
+      }
+
+      max_acceleration: {
+        type: double,
+        default_value: .NAN,
+      }
+      max_jerk: {
+        type: double,
+        default_value: .NAN,
+      }
+      
+  dyros_robot_controller:
+    manipulator_joint_gains:
+      kp: {
+          type: double_array,
+          default_value: [600.0, 600.0, 600.0, 600.0, 250.0, 150.0, 50.0],
+          description: "Manipulator joint position error gains for PD control (size must be 7*num_robot)"
+      }
+      kv: {
+        type: double_array,
+        default_value: [30.0, 30.0, 30.0, 30.0, 10.0, 10.0, 5.0],
+        description: "Manipulator joint velocity error gains for PD control (size must be 7*num_robot)"
+      }
+    task_gains:
+      ik:
+        kp: {
+          type: double_array,
+          default_value: [10.0, 10.0, 10.0, 30.0, 30.0, 30.0],
+          description: "Task space position error gains for IK (CLIK/QPIK) control (size must be 6)"
+        }
+      id: 
+        kp: {
+          type: double_array,
+          default_value: [600.0, 600.0, 600.0, 1000.0, 1000.0, 1000.0],
+          description: "Task space position error gains for ID (OSF/QPID) control (size must be 6)"
+        }
+        kv: {
+          type: double_array,
+          default_value: [20.0, 20.0, 20.0, 30.0, 30.0, 30.0],
+          description: "Task space velocity error gains for ID (OSF/QPID) control (size must be 6)"
+        }
+    QPIK_weight:
+      tracking:
+        weights: {
+            type: double_array,
+            default_value: [10.0, 10.0, 10.0, 40.0, 40.0, 40.0],
+            description: "Weight for track given task space velocity (size must be 6)"
+          }
+      joint:
+        velocity:
+          manipulator: {
+              type: double_array,
+              default_value: [0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01],
+              description: "Weight for damping manipulator joint velocity (size must be 7 * num_robot)"
+            }
+          mobile: {
+              type: double_array,
+              default_value: [],
+              description: "Weight for damping mobile base velocity (size must be 3)"
+            }
+        acceleration:
+          manipulator: {
+              type: double_array,
+              default_value: [0.00001, 0.00001, 0.00001, 0.00001, 0.00001, 0.00001, 0.00001],
+              description: "Weight for damping manipulator joint acceleration (size must be 7 * num_robot)"
+            }
+          mobile: {
+              type: double_array,
+              default_value: [],
+              description: "Weight for damping mobile base acceleration (size must be 3)"
+            }
+    QPID_weight:
+      tracking:
+        weights: {
+            type: double_array,
+            default_value: [10.0, 10.0, 10.0, 1.0, 1.0, 1.0],
+            description: "Weight for track given task space velocity (size must be 6)"
+          }
+      joint:
+        velocity:
+          manipulator: {
+              type: double_array,
+              default_value: [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
+              description: "Weight for damping manipulator joint velocity (size must be 7 * num_robot)"
+            }
+          mobile: {
+              type: double_array,
+              default_value: [],
+              description: "Weight for damping mobile base velocity (size must be 3)"
+            }
+        acceleration:
+          manipulator: {
+              type: double_array,
+              default_value: [5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0],
+              description: "Weight for damping manipulator joint acceleration (size must be 7 * num_robot)"
+            }
+          mobile: {
+              type: double_array,
+              default_value: [],
+              description: "Weight for damping mobile base acceleration (size must be 3)"
+            }

@@ -1,0 +1,440 @@
+/**:
+  controller_manager:
+    ros__parameters:
+      update_rate: 1000  # Hz
+      thread_priority: 98
+
+      left_franka_robot_state_broadcaster:
+        type: franka_robot_state_broadcaster/FrankaRobotStateBroadcaster
+
+      right_franka_robot_state_broadcaster:
+        type: franka_robot_state_broadcaster/FrankaRobotStateBroadcaster
+
+      joint_state_broadcaster:
+        type: joint_state_broadcaster/JointStateBroadcaster
+
+      left_fr3_husky_action_controller:
+        type: fr3_husky_controller/FR3HuskyActionController
+
+      right_fr3_husky_action_controller:
+        type: fr3_husky_controller/FR3HuskyActionController
+
+      dual_fr3_husky_action_controller:
+        type: fr3_husky_controller/FR3HuskyActionController
+
+
+      left_test_fr3_husky_controller:
+        type: fr3_husky_controller/TestFr3HuskyController
+
+      right_test_fr3_husky_controller:
+        type: fr3_husky_controller/TestFr3HuskyController
+
+      dual_test_fr3_husky_controller:
+        type: fr3_husky_controller/TestFr3HuskyController
+
+  left_franka_robot_state_broadcaster:
+    ros__parameters:
+      arm_id: fr3
+      interface_prefix: left
+      lock_try_count: 5
+      lock_sleep_interval: 5
+      lock_log_error: false
+      lock_update_success: true
+
+  right_franka_robot_state_broadcaster:
+    ros__parameters:
+      arm_id: fr3
+      interface_prefix: right
+      lock_try_count: 5
+      lock_sleep_interval: 5
+      lock_log_error: false
+      lock_update_success: true
+      
+  left_fr3_husky_action_controller:
+    ros__parameters:
+      update_rate: 1000  # Hz
+      robot_name: ["left"]
+      manipulator_joints:
+        - left_fr3_joint1
+        - left_fr3_joint2
+        - left_fr3_joint3
+        - left_fr3_joint4
+        - left_fr3_joint5
+        - left_fr3_joint6
+        - left_fr3_joint7
+      manipulator_state_interfaces:
+        - position
+        - velocity
+        - effort
+      manipulator_command_interface:
+        effort
+      left_wheel_names:
+        - "front_left_wheel_joint"
+        - "rear_left_wheel_joint"
+      right_wheel_names: 
+        - "front_right_wheel_joint"
+        - "rear_right_wheel_joint"
+
+      wheel_separation: 0.512 #0.1  # 0.256  # 0.512
+      wheel_radius: 0.147 #0.1651 # 0.015
+      wheel_separation_multiplier: 1.0
+      wheel_radius_multiplier: 0.5271
+
+      odom_frame_id: odom
+      base_frame_id: base_link
+      pose_covariance_diagonal: [0.001, 0.001, 0.001, 0.001, 0.001, 0.01]
+      twist_covariance_diagonal: [0.001, 0.001, 0.001, 0.001, 0.001, 0.01]
+      publish_rate: 50.0
+      
+      use_estop: true
+      estop_button_index: 5
+
+      linear.x.max_velocity: 1.0
+      linear.x.max_acceleration: 1.0
+      linear.x.max_jerk: 0.0
+
+      angular.z.max_velocity: 1.0
+      angular.z.max_acceleration: 1.0
+      angular.z.max_jerk: 0.0
+      dyros_robot_controller:
+        manipulator_joint_gains:
+          kp: [600.0, 600.0, 600.0, 600.0, 250.0, 150.0, 50.0]
+          kv: [30.0, 30.0, 30.0, 30.0, 10.0, 10.0, 5.0]
+        task_gains:
+          ik:
+            kp: [10.0, 10.0, 10.0, 30.0, 30.0, 30.0]
+          id:
+            kp: [600.0, 600.0, 600.0, 1000.0, 1000.0, 1000.0]
+            kv: [20.0, 20.0, 20.0, 30.0, 30.0, 30.0]
+        QPIK_weight:
+          tracking:
+            weights: [10.0, 10.0, 10.0, 40.0, 40.0, 40.0]
+          joint: 
+            velocity:
+              manipulator: [0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01]
+              mobile: [0.1, 0.1, 0.1]
+            acceleration:
+              manipulator: [0.00001, 0.00001, 0.00001, 0.00001, 0.00001, 0.00001, 0.00001]
+              mobile: [0.1, 0.1, 0.1]
+        QPID_weight:
+          tracking:
+            weights: [10.0, 10.0, 10.0, 1.0, 1.0, 1.0]
+          joint: 
+            velocity:
+              manipulator: [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
+              mobile: [0.0, 0.0, 0.0]
+            acceleration:
+              manipulator: [5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0]
+              mobile: [0.0, 0.0, 0.0]
+
+  right_fr3_husky_action_controller:
+    ros__parameters:
+      update_rate: 1000  # Hz
+      robot_name: ["right"]
+      manipulator_joints:
+        - right_fr3_joint1
+        - right_fr3_joint2
+        - right_fr3_joint3
+        - right_fr3_joint4
+        - right_fr3_joint5
+        - right_fr3_joint6
+        - right_fr3_joint7
+      manipulator_state_interfaces:
+        - position
+        - velocity
+        - effort
+      manipulator_command_interface: 
+        effort
+      left_wheel_names:
+        - "front_left_wheel_joint"
+        - "rear_left_wheel_joint"
+      right_wheel_names: 
+        - "front_right_wheel_joint"
+        - "rear_right_wheel_joint"
+
+      wheel_separation: 0.512 #0.1  # 0.256  # 0.512
+      wheel_radius: 0.147 #0.1651 # 0.015
+      wheel_separation_multiplier: 1.0
+      wheel_radius_multiplier: 0.5271
+      
+      odom_frame_id: odom
+      base_frame_id: base_link
+      pose_covariance_diagonal: [0.001, 0.001, 0.001, 0.001, 0.001, 0.01]
+      twist_covariance_diagonal: [0.001, 0.001, 0.001, 0.001, 0.001, 0.01]
+      publish_rate: 50.0
+
+      use_estop: true
+      estop_button_index: 5
+
+      linear.x.max_velocity: 1.0
+      linear.x.max_acceleration: 1.0
+      linear.x.max_jerk: 0.0
+
+      angular.z.max_velocity: 1.0
+      angular.z.max_acceleration: 1.0
+      angular.z.max_jerk: 0.0
+      dyros_robot_controller:
+        manipulator_joint_gains:
+          kp: [600.0, 600.0, 600.0, 600.0, 250.0, 150.0, 50.0]
+          kv: [30.0, 30.0, 30.0, 30.0, 10.0, 10.0, 5.0]
+        task_gains:
+          ik:
+            kp: [10.0, 10.0, 10.0, 30.0, 30.0, 30.0]
+          id:
+            kp: [600.0, 600.0, 600.0, 1000.0, 1000.0, 1000.0]
+            kv: [20.0, 20.0, 20.0, 30.0, 30.0, 30.0]
+        QPIK_weight:
+          tracking:
+            weights: [10.0, 10.0, 10.0, 40.0, 40.0, 40.0]
+          joint: 
+            velocity:
+              manipulator: [0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01]
+              mobile: [0.1, 0.1, 0.1]
+            acceleration:
+              manipulator: [0.00001, 0.00001, 0.00001, 0.00001, 0.00001, 0.00001, 0.00001]
+              mobile: [0.1, 0.1, 0.1]
+        QPID_weight:
+          tracking:
+            weights: [10.0, 10.0, 10.0, 1.0, 1.0, 1.0]
+          joint: 
+            velocity:
+              manipulator: [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
+              mobile: [0.1, 0.1, 0.1]
+            acceleration:
+              manipulator: [5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0]
+              mobile: [0.1, 0.1, 0.1]
+  
+  dual_fr3_husky_action_controller:
+    ros__parameters:
+      update_rate: 1000  # Hz
+      robot_name: ["left", "right"]
+      manipulator_joints:
+        - left_fr3_joint1
+        - left_fr3_joint2
+        - left_fr3_joint3
+        - left_fr3_joint4
+        - left_fr3_joint5
+        - left_fr3_joint6
+        - left_fr3_joint7
+        - right_fr3_joint1
+        - right_fr3_joint2
+        - right_fr3_joint3
+        - right_fr3_joint4
+        - right_fr3_joint5
+        - right_fr3_joint6
+        - right_fr3_joint7
+      manipulator_state_interfaces:
+        - position
+        - velocity
+        - effort
+      manipulator_command_interface: 
+        effort
+      left_wheel_names:
+        - "front_left_wheel_joint"
+        - "rear_left_wheel_joint"
+      right_wheel_names: 
+        - "front_right_wheel_joint"
+        - "rear_right_wheel_joint"
+
+      wheel_separation: 0.512 #0.1  # 0.256  # 0.512
+      wheel_radius: 0.147 #0.1651 # 0.015
+      wheel_separation_multiplier: 1.0
+      wheel_radius_multiplier: 0.5271
+      
+      odom_frame_id: odom
+      base_frame_id: base_link
+      pose_covariance_diagonal: [0.001, 0.001, 0.001, 0.001, 0.001, 0.01]
+      twist_covariance_diagonal: [0.001, 0.001, 0.001, 0.001, 0.001, 0.01]
+      publish_rate: 50.0
+
+      use_estop: true  
+      estop_button_index: 5
+
+      linear.x.max_velocity: 1.0
+      linear.x.max_acceleration: 1.0
+      linear.x.max_jerk: 0.0
+
+      angular.z.max_velocity: 1.0
+      angular.z.max_acceleration: 1.0
+      angular.z.max_jerk: 0.0
+      dyros_robot_controller:
+        manipulator_joint_gains:
+          kp: [600.0, 600.0, 600.0, 600.0, 250.0, 150.0, 50.0,
+               600.0, 600.0, 600.0, 600.0, 250.0, 150.0, 50.0]
+          kv: [30.0, 30.0, 30.0, 30.0, 10.0, 10.0, 5.0,
+               30.0, 30.0, 30.0, 30.0, 10.0, 10.0, 5.0]
+        task_gains:
+          ik:
+            kp: [10.0, 10.0, 10.0, 30.0, 30.0, 30.0]
+          id:
+            kp: [600.0, 600.0, 600.0, 1000.0, 1000.0, 1000.0]
+            kv: [20.0, 20.0, 20.0, 30.0, 30.0, 30.0]
+        QPIK_weight:
+          tracking:
+            weights: [10.0, 10.0, 10.0, 40.0, 40.0, 40.0]
+          joint: 
+            velocity:
+              manipulator: [0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01,
+                            0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01]
+              mobile: [0.1, 0.1, 0.1]
+            acceleration:
+              manipulator: [0.00001, 0.00001, 0.00001, 0.00001, 0.00001, 0.00001, 0.00001,
+                            0.00001, 0.00001, 0.00001, 0.00001, 0.00001, 0.00001, 0.00001]
+              mobile: [0.1, 0.1, 0.1]
+        QPID_weight:
+          tracking:
+            weights: [10.0, 10.0, 10.0, 1.0, 1.0, 1.0]
+          joint: 
+            velocity:
+              manipulator: [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1,
+                            0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
+              mobile: [0.1, 0.1, 0.1]
+            acceleration:
+              manipulator: [5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0,
+                            5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0]
+              mobile: [0.1, 0.1, 0.1]
+
+  left_test_fr3_husky_controller:
+    ros__parameters:
+      update_rate: 1000  # Hz
+      robot_name: ["left"]
+      manipulator_joints:
+        - left_fr3_joint1
+        - left_fr3_joint2
+        - left_fr3_joint3
+        - left_fr3_joint4
+        - left_fr3_joint5
+        - left_fr3_joint6
+        - left_fr3_joint7
+      manipulator_state_interfaces:
+        - position
+        - velocity
+        - effort
+      manipulator_command_interface: effort
+      left_wheel_names:
+        - "front_left_wheel_joint"
+        - "rear_left_wheel_joint"
+      right_wheel_names:
+        - "front_right_wheel_joint"
+        - "rear_right_wheel_joint"
+
+      wheel_separation: 0.512
+      wheel_radius: 0.147
+      wheel_separation_multiplier: 1.0
+      wheel_radius_multiplier: 0.5271
+
+      odom_frame_id: odom
+      base_frame_id: base_link
+      pose_covariance_diagonal: [0.001, 0.001, 0.001, 0.001, 0.001, 0.01]
+      twist_covariance_diagonal: [0.001, 0.001, 0.001, 0.001, 0.001, 0.01]
+      publish_rate: 50.0
+
+      use_estop: true
+      estop_button_index: 5
+
+      linear.x.max_velocity: 1.0
+      linear.x.max_acceleration: 1.0
+      linear.x.max_jerk: 0.0
+
+      angular.z.max_velocity: 1.0
+      angular.z.max_acceleration: 1.0
+      angular.z.max_jerk: 0.0
+
+  right_test_fr3_husky_controller:
+    ros__parameters:
+      update_rate: 1000  # Hz
+      robot_name: ["right"]
+      manipulator_joints:
+        - right_fr3_joint1
+        - right_fr3_joint2
+        - right_fr3_joint3
+        - right_fr3_joint4
+        - right_fr3_joint5
+        - right_fr3_joint6
+        - right_fr3_joint7
+      manipulator_state_interfaces:
+        - position
+        - velocity
+        - effort
+      manipulator_command_interface: effort
+      left_wheel_names:
+        - "front_left_wheel_joint"
+        - "rear_left_wheel_joint"
+      right_wheel_names:
+        - "front_right_wheel_joint"
+        - "rear_right_wheel_joint"
+
+      wheel_separation: 0.512
+      wheel_radius: 0.147
+      wheel_separation_multiplier: 1.0
+      wheel_radius_multiplier: 0.5271
+
+      odom_frame_id: odom
+      base_frame_id: base_link
+      pose_covariance_diagonal: [0.001, 0.001, 0.001, 0.001, 0.001, 0.01]
+      twist_covariance_diagonal: [0.001, 0.001, 0.001, 0.001, 0.001, 0.01]
+      publish_rate: 50.0
+
+      use_estop: true
+      estop_button_index: 5
+
+      linear.x.max_velocity: 1.0
+      linear.x.max_acceleration: 1.0
+      linear.x.max_jerk: 0.0
+
+      angular.z.max_velocity: 1.0
+      angular.z.max_acceleration: 1.0
+      angular.z.max_jerk: 0.0
+
+  dual_test_fr3_husky_controller:
+    ros__parameters:
+      update_rate: 1000  # Hz
+      robot_name: ["left", "right"]
+      manipulator_joints:
+        - left_fr3_joint1
+        - left_fr3_joint2
+        - left_fr3_joint3
+        - left_fr3_joint4
+        - left_fr3_joint5
+        - left_fr3_joint6
+        - left_fr3_joint7
+        - right_fr3_joint1
+        - right_fr3_joint2
+        - right_fr3_joint3
+        - right_fr3_joint4
+        - right_fr3_joint5
+        - right_fr3_joint6
+        - right_fr3_joint7
+      manipulator_state_interfaces:
+        - position
+        - velocity
+        - effort
+      manipulator_command_interface: effort
+      left_wheel_names:
+        - "front_left_wheel_joint"
+        - "rear_left_wheel_joint"
+      right_wheel_names:
+        - "front_right_wheel_joint"
+        - "rear_right_wheel_joint"
+
+      wheel_separation: 0.512
+      wheel_radius: 0.147
+      wheel_separation_multiplier: 1.0
+      wheel_radius_multiplier: 0.5271
+
+      odom_frame_id: odom
+      base_frame_id: base_link
+      pose_covariance_diagonal: [0.001, 0.001, 0.001, 0.001, 0.001, 0.01]
+      twist_covariance_diagonal: [0.001, 0.001, 0.001, 0.001, 0.001, 0.01]
+      publish_rate: 50.0
+
+      use_estop: true
+      estop_button_index: 5
+
+      linear.x.max_velocity: 1.0
+      linear.x.max_acceleration: 1.0
+      linear.x.max_jerk: 0.0
+
+      angular.z.max_velocity: 1.0
+      angular.z.max_acceleration: 1.0
+      angular.z.max_jerk: 0.0

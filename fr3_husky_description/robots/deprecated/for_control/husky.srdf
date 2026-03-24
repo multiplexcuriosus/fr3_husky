@@ -1,0 +1,227 @@
+<?xml version="1.0" ?>
+<robot name="husky">
+  <link name="world"/>
+
+  <!-- Virtual -->
+  <joint name="world_to_vx" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <parent link="world"/>
+    <child  link="v_x_link"/>
+  </joint>
+  <link name="v_x_link" />
+  <joint name="v_x_joint" type="prismatic">
+    <origin rpy="0 0 0" xyz="0 0 0"/>
+      <parent link="v_x_link"/>
+      <child link="v_y_link"/>
+      <axis xyz= "1 0 0"/>
+      <limit effort="1000.0" lower="-10000.0" upper="10000.0" velocity="10000.0"/>
+  </joint>
+  <link name="v_y_link" />
+  <joint name="v_y_joint" type="prismatic">
+    <origin rpy="0 0 0" xyz="0 0 0"/>
+      <parent link="v_y_link"/>
+      <child link="v_t_link"/>
+      <axis xyz= "0 1 0"/>
+      <limit effort="1000.0" lower="-10000.0" upper="10000.0" velocity="10000.0"/>
+  </joint>
+  <link name="v_t_link" />
+  <joint name="v_t_joint" type="revolute">
+    <origin rpy="0 0 0" xyz="0 0 0"/>
+      <parent link="v_t_link"/>
+      <child link="base_footprint"/>
+      <axis rpy="0 0 0" xyz="0 0 1"/>
+      <limit effort="1000.0" lower="-6.24" upper="6.24" velocity="10000.0"/>
+  </joint>
+
+  <!-- Mobile Base -->
+  <link name="base_footprint"/>
+  <joint name="base_footprint_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 0 0.13228"/>
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+  </joint>
+
+  <link name="base_link">
+    <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://mujoco_ros_sim/mujoco_menagerie/husky/assets/base_link.dae" />
+        </geometry>
+      </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0.061875"/>
+      <geometry>
+        <box size="0.9874 0.5709 0.12375"/>
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0.17562499999999998"/>
+      <geometry>
+        <box size="0.7899200000000001 0.5709 0.10375"/>
+      </geometry>
+    </collision>
+  </link>
+
+    <link name="top_chassis_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://mujoco_ros_sim/mujoco_menagerie/husky/assets/top_chassis.dae" />
+        </geometry>
+      </visual>
+    </link>
+
+    <joint name="top_chassis_joint" type="fixed">
+      <parent link="base_link" />
+      <child link="top_chassis_link" />
+    </joint>
+
+    <!-- Spawn user rails -->
+    <link name="top_plate_user_rail_link">
+      <visual>
+        <origin xyz="0.272 0 0.019"/>
+        <geometry>
+          <mesh filename="package://mujoco_ros_sim/mujoco_menagerie/husky/assets/user_rail.dae" />
+        </geometry>
+      </visual>
+    </link>
+
+    <!-- Attach user rails to base link -->
+    <joint name="top_plate_user_rail_joint" type="fixed">
+      <parent link="base_link" />
+      <child link="top_plate_user_rail_link" />
+    </joint>
+
+    <!-- Spawn top plate -->
+    <link name="top_plate_link">
+      <visual>
+        <origin xyz="0.0812 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://mujoco_ros_sim/mujoco_menagerie/husky/assets/top_plate.dae" />
+        </geometry>
+      </visual>
+    </link>
+
+    <!-- Attach top plate -->
+  <joint name="top_plate_joint" type="fixed">
+    <parent link="top_plate_user_rail_link" />
+    <child link="top_plate_link"/>
+    <origin xyz="0 0 0.021" rpy="0 0 0"/>
+  </joint>
+
+  <link name="inertial_link">
+    <inertial>
+      <mass value="46.034"/>
+      <origin xyz="-0.00065 -0.085 0.062"/>
+      <inertia ixx="0.6022" ixy="-0.02364" ixz="-0.1197" iyy="1.7386" iyz="-0.001544" izz="2.0296"/>
+    </inertial>
+  </link>
+
+  <joint name="inertial_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="inertial_link"/>
+  </joint>
+
+  <link name="left_wheel">
+    <inertial>
+      <mass value="2.637"/>
+      <origin xyz="0 0 0"/>
+      <inertia ixx="0.02467" ixy="0" ixz="0" iyy="0.04411" iyz="0" izz="0.02467"/>
+    </inertial>
+    <collision>
+      <origin rpy="1.570795 0 0" xyz="0 0 0"/>
+      <geometry>
+        <cylinder length="0.1143" radius="0.1651"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Pinocchio takes 'continuous' type as nv=2 -->
+  <joint name="left_wheel" type="revolute"> 
+    <parent link="base_link"/>
+    <child link="left_wheel"/>
+    <origin rpy="0 0 0" xyz="0 0.2775 0.03282"/>
+    <axis rpy="0 0 0" xyz="0 1 0"/>
+    <limit effort="100.0" lower="-3.141592" upper="3.141592" velocity="1000"/>
+  </joint>
+
+  <link name="right_wheel">
+    <inertial>
+      <mass value="2.637"/>
+      <origin xyz="0 0 0"/>
+      <inertia ixx="0.02467" ixy="0" ixz="0" iyy="0.04411" iyz="0" izz="0.02467"/>
+    </inertial>
+    <collision>
+      <origin rpy="1.570795 0 0" xyz="0 0 0"/>
+      <geometry>
+        <cylinder length="0.1143" radius="0.1651"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="right_wheel" type="revolute">
+    <parent link="base_link"/>
+    <child link="right_wheel"/>
+    <origin rpy="0 0 0" xyz="0 -0.2775 0.03282"/>
+    <axis rpy="0 0 0" xyz="0 1 0"/>
+    <limit effort="100.0" lower="-3.141592" upper="3.141592" velocity="1000"/>
+  </joint>
+
+  <!-- for visualization -->
+   <link name="front_left_wheel">
+    <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://mujoco_ros_sim/mujoco_menagerie/husky/assets/wheel.dae" />
+        </geometry>
+      </visual>
+  </link>
+  <joint name="front_left_wheel_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="front_left_wheel"/>
+    <origin rpy="0 0 0" xyz="0.256 0.2775 0.03282"/>
+  </joint>
+
+  <link name="front_right_wheel">
+    <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://mujoco_ros_sim/mujoco_menagerie/husky/assets/wheel.dae" />
+        </geometry>
+      </visual>
+  </link>
+  <joint name="front_right_wheel_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="front_right_wheel"/>
+    <origin rpy="0 0 0" xyz="0.256 -0.2775 0.03282"/>
+  </joint>
+
+  <link name="rear_left_wheel">
+    <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://mujoco_ros_sim/mujoco_menagerie/husky/assets/wheel.dae" />
+        </geometry>
+      </visual>
+  </link>
+  <joint name="rear_left_wheel_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="rear_left_wheel"/>
+    <origin rpy="0 0 0" xyz="-0.256 0.2775 0.03282"/>
+  </joint>
+
+  <link name="rear_right_wheel">
+    <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://mujoco_ros_sim/mujoco_menagerie/husky/assets/wheel.dae" />
+        </geometry>
+      </visual>
+  </link>
+  <joint name="rear_right_wheel_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="rear_right_wheel"/>
+    <origin rpy="0 0 0" xyz="-0.256 -0.2775 0.03282"/>
+  </joint>
+</robot>

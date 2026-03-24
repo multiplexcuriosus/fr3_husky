@@ -1,0 +1,37 @@
+fr3_controller:
+  # FR3
+  robot_name: {
+    type: string_array,
+    default_value: ["left", "right"],
+    description: "Robot name want to control (left/right)"
+  }
+  manipulator_joints: {
+    type: string_array,
+    default_value: [],
+    description: "Joint names of the manipulator system",
+    read_only: true,
+    validation: {
+      unique<>: null,
+      size_gt<>: [0],
+    }
+  }
+  manipulator_command_interface: {
+    type: string,
+    default_value: "effort",
+    description: "Command interface provided by the hardware interface for manipulator joints",
+    read_only: true,
+    validation: {
+      one_of<>: [["position", "velocity", "effort"]],
+    }
+  }
+  manipulator_state_interfaces: {
+    type: string_array,
+    default_value: [],
+    description: "State interfaces provided by the hardware for manipulator joints.",
+    read_only: true,
+    validation: {
+      unique<>: null,
+      size_gt<>: [0],
+      subset_of<>: [["position", "velocity", "effort",]],
+    }
+  }
