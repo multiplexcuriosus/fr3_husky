@@ -7,6 +7,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <vector>
+#include <cmath>
 
 namespace fr3_husky_controller::servers::fr3
 {
@@ -196,7 +197,7 @@ CartesianExecutor::ComputeResult CartesianExecutor::compute(
         RCLCPP_INFO(node_->get_logger(), "[%s] target pose reset to current EE pose", name_.c_str());
     }
 
-    Eigen::Vector3d raw_lin_cmd = Eigen::Vector3d::Zero();
+    Eigen::Vector3d raw_lin_cmd_local = Eigen::Vector3d::Zero();
 
     {
         std::lock_guard<std::mutex> lock(cmd_mutex_);
@@ -206,20 +207,23 @@ CartesianExecutor::ComputeResult CartesianExecutor::compute(
             const double cmd_age = (time - latest_cmd_stamp_).seconds();
             if (cmd_age <= cmd_timeout_sec_)
             {
-                raw_lin_cmd = latest_lin_vel_cmd_ * hapic_lin_vel_multiplier_;
+                // Incoming twist is interpreted in the TCP / EE local frame.
+                raw_lin_cmd_local = latest_lin_vel_cmd_ * hapic_lin_vel_multiplier_;
             }
             else
             {
-                raw_lin_cmd.setZero();
+                raw_lin_cmd_local.setZero();
             }
         }
     }
 
-    filtered_lin_vel_cmd_ = dyros_math::lowPassFilter(
-        raw_lin_cmd,
-        filtered_lin_vel_cmd_,
-        fr3_model_updater_.dt_,
-        vel_lpf_tau_);
+    // Rotate TCP-local command into the base frame.
+    const Eigen::Matrix3d R_base_ee = ee_data[control_ee_name_].x.linear();
+    const Eigen::Vector3d raw_lin_cmd = R_base_ee * raw_lin_cmd_local;
+
+    // Simple first-order low-pass filter.
+    const double alpha = std::exp(-fr3_model_updater_.dt_ / vel_lpf_tau_);
+    filtered_lin_vel_cmd_ = alpha * filtered_lin_vel_cmd_ + (1.0 - alpha) * raw_lin_cmd;
 
     Eigen::Vector6d target_vel = Eigen::Vector6d::Zero();
 
@@ -348,7 +352,7 @@ void CartesianExecutor::subTwistCallback(const geometry_msgs::msg::TwistStamped:
     latest_lin_vel_cmd_.x() = msg->twist.linear.x;
     latest_lin_vel_cmd_.y() = msg->twist.linear.y;
     latest_lin_vel_cmd_.z() = msg->twist.linear.z;
-    latest_cmd_stamp_ = msg->header.stamp;
+    latest_cmd_stamp_ = node_->now();
     have_twist_cmd_ = true;
 }
 
