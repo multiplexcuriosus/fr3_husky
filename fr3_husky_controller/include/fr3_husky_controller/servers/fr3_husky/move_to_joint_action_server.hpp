@@ -58,6 +58,7 @@ private:
     ResultPtr     makeResult(StopReason reason) override;
 
     void writeHoldCommands();
+    void initializeMoveGroup();
     /** Background thread: plan via MoveGroupInterface, wait until this
      *  server has finished, then hand off the trajectory to
      *  fr3_husky_joint_trajectory_controller. */
@@ -70,7 +71,9 @@ private:
     FR3HuskyModelUpdater& fr3_husky_model_updater_;
 
     rclcpp::Node::SharedPtr moveit_node_;
-    std::unique_ptr<moveit::planning_interface::MoveGroupInterface> mgi_;
+    std::unique_ptr<moveit::planning_interface::MoveGroupInterface> move_group_;
+    std::mutex move_group_mutex_;
+    std::atomic<bool> planning_active_{false};
 
     rclcpp_action::Client<FJT>::SharedPtr jtc_client_;
 
