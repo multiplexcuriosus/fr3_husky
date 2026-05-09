@@ -1,6 +1,7 @@
 #include <fr3_husky_controller/servers/fr3_husky/move_to_joint_action_server.hpp>
 
 #include <chrono>
+#include <future>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -79,58 +80,7 @@ MoveToJoint::MoveToJoint(const std::string& name, const NodePtr& node,
         planning_group_ = arm_id + "_arm";
     }
 
-    // --- Create persistent MoveGroupInterface ---
-    {
-        bool params_ok = false;
-        try
-        {
-            auto pc = std::make_shared<rclcpp::SyncParametersClient>(moveit_node_, "move_group");
-            if (pc->wait_for_service(std::chrono::seconds(5)))
-            {
-                const std::vector<std::string> param_names{
-                    "robot_description", "robot_description_semantic"};
-                for (const auto& pname : param_names)
-                {
-                    if (moveit_node_->has_parameter(pname)) continue;
-                    auto vals = pc->get_parameters({pname});
-                    if (!vals.empty() &&
-                        vals[0].get_type() != rclcpp::ParameterType::PARAMETER_NOT_SET)
-                        moveit_node_->declare_parameter(pname, vals[0].get_parameter_value());
-                }
-                params_ok = moveit_node_->has_parameter("robot_description_semantic");
-            }
-            else
-            {
-                RCLCPP_WARN(node_->get_logger(),
-                            "[%s] move_group param service not available within 5 s — "
-                            "MoveGroupInterface not created", name_.c_str());
-            }
-        }
-        catch (const std::exception& e)
-        {
-            RCLCPP_WARN(node_->get_logger(),
-                        "[%s] param forwarding failed: %s", name_.c_str(), e.what());
-        }
-
-        if (params_ok)
-        {
-            try
-            {
-                mgi_ = std::make_unique<moveit::planning_interface::MoveGroupInterface>(
-                    moveit_node_, planning_group_,
-                    std::shared_ptr<tf2_ros::Buffer>{},
-                    rclcpp::Duration::from_seconds(10.0));
-                RCLCPP_INFO(node_->get_logger(),
-                            "[%s] MoveGroupInterface ready", name_.c_str());
-            }
-            catch (const std::exception& e)
-            {
-                RCLCPP_WARN(node_->get_logger(),
-                            "[%s] MoveGroupInterface creation failed: %s",
-                            name_.c_str(), e.what());
-            }
-        }
-    }
+    initializeMoveGroup();
 
     RCLCPP_INFO(node_->get_logger(), "[%s] MoveToJoint created — group=%s", name_.c_str(),
                 planning_group_.c_str());
@@ -146,6 +96,64 @@ MoveToJoint::~MoveToJoint()
 // ============================================================
 // Helpers
 // ============================================================
+
+void MoveToJoint::initializeMoveGroup()
+{
+    if (move_group_)
+        return;
+
+    bool params_ok = false;
+    try
+    {
+        auto pc = std::make_shared<rclcpp::SyncParametersClient>(moveit_node_, "move_group");
+        if (pc->wait_for_service(std::chrono::seconds(5)))
+        {
+            const std::vector<std::string> param_names{
+                "robot_description", "robot_description_semantic"};
+            for (const auto& pname : param_names)
+            {
+                if (moveit_node_->has_parameter(pname)) continue;
+                auto vals = pc->get_parameters({pname});
+                if (!vals.empty() &&
+                    vals[0].get_type() != rclcpp::ParameterType::PARAMETER_NOT_SET)
+                    moveit_node_->declare_parameter(pname, vals[0].get_parameter_value());
+            }
+            params_ok = moveit_node_->has_parameter("robot_description_semantic");
+        }
+        else
+        {
+            RCLCPP_WARN(node_->get_logger(),
+                        "[%s] move_group param service not available within 5 s — "
+                        "MoveGroupInterface not created", name_.c_str());
+        }
+    }
+    catch (const std::exception& e)
+    {
+        RCLCPP_WARN(node_->get_logger(),
+                    "[%s] param forwarding failed: %s", name_.c_str(), e.what());
+    }
+
+    if (!params_ok)
+        return;
+
+    try
+    {
+        RCLCPP_INFO(node_->get_logger(),
+                    "[fr3_move_to_joint] creating persistent MoveGroupInterface");
+        move_group_ = std::make_unique<moveit::planning_interface::MoveGroupInterface>(
+            moveit_node_, planning_group_,
+            std::shared_ptr<tf2_ros::Buffer>{},
+            rclcpp::Duration::from_seconds(10.0));
+        RCLCPP_INFO(node_->get_logger(),
+                    "[%s] MoveGroupInterface ready", name_.c_str());
+    }
+    catch (const std::exception& e)
+    {
+        RCLCPP_WARN(node_->get_logger(),
+                    "[%s] MoveGroupInterface creation failed: %s",
+                    name_.c_str(), e.what());
+    }
+}
 
 void MoveToJoint::writeHoldCommands()
 {
@@ -187,6 +195,12 @@ void MoveToJoint::writeHoldCommands()
 
 void MoveToJoint::runPlanning()
 {
+    struct PlanningActiveResetGuard
+    {
+        std::atomic<bool>& flag;
+        ~PlanningActiveResetGuard() { flag.store(false, std::memory_order_release); }
+    } guard{planning_active_};
+
     RCLCPP_INFO(node_->get_logger(), "[%s] planning group: %s", name_.c_str(),
                 planning_group_.c_str());
 
@@ -194,7 +208,10 @@ void MoveToJoint::runPlanning()
     bool plan_ok = false;
     std::string err_msg;
 
-    if (!mgi_)
+    std::lock_guard<std::mutex> lock(move_group_mutex_);
+
+
+    if (!move_group_)
     {
         RCLCPP_ERROR(node_->get_logger(),
                      "[%s] MoveGroupInterface not available. "
@@ -210,10 +227,13 @@ void MoveToJoint::runPlanning()
     {
         try
         {
-            mgi_->setPlanningTime(10.0);
-            mgi_->setStartStateToCurrentState();
-            mgi_->setMaxVelocityScalingFactor(goal_vel_scale_);
-            mgi_->setMaxAccelerationScalingFactor(goal_acc_scale_);
+            {
+                std::lock_guard<std::mutex> lock(move_group_mutex_);
+                move_group_->setPlanningTime(10.0);
+                move_group_->setMaxVelocityScalingFactor(goal_vel_scale_);
+                move_group_->setMaxAccelerationScalingFactor(goal_acc_scale_);
+                move_group_->setStartStateToCurrentState();
+            }
 
             // Build target: fill ALL group joints from hardware q_total_,
             // then override with the goal's specified joints.
@@ -238,7 +258,13 @@ void MoveToJoint::runPlanning()
                     target[goal_joint_names_[i]] = goal_target_positions_[i];
             }
 
-            if (!mgi_->setJointValueTarget(target))
+            bool set_target_ok = false;
+            {
+                std::lock_guard<std::mutex> lock(move_group_mutex_);
+                set_target_ok = move_group_->setJointValueTarget(target);
+            }
+
+            if (!set_target_ok)
             {
                 err_msg = "setJointValueTarget failed";
             }
@@ -248,7 +274,11 @@ void MoveToJoint::runPlanning()
             }
             else
             {
-                const auto ec = mgi_->plan(plan);
+                moveit::core::MoveItErrorCode ec;
+                {
+                    std::lock_guard<std::mutex> lock(move_group_mutex_);
+                    ec = move_group_->plan(plan);
+                }
                 if (ec)
                 {
                     plan_ok = true;
@@ -358,7 +388,22 @@ void MoveToJoint::runPlanning()
             }
         };
 
-    jtc_client_->async_send_goal(jtc_goal, send_opts);
+    auto future_goal = jtc_client_->async_send_goal(jtc_goal, send_opts);
+    if (future_goal.wait_for(std::chrono::seconds(5)) != std::future_status::ready)
+    {
+        RCLCPP_ERROR(node_->get_logger(),
+                     "[%s] timeout waiting for fr3_husky_joint_trajectory_controller goal response",
+                     name_.c_str());
+        return;
+    }
+
+    auto gh = future_goal.get();
+    if (!gh)
+    {
+        RCLCPP_ERROR(node_->get_logger(),
+                     "[%s] fr3_husky_joint_trajectory_controller goal handle is null",
+                     name_.c_str());
+    }
 }
 
 // ============================================================
@@ -430,31 +475,54 @@ void MoveToJoint::onGoalAccepted(const ActionT::Goal& goal)
         plan_error_msg_.clear();
     }
 
+    if (planning_active_.exchange(true, std::memory_order_acq_rel))
+    {
+        RCLCPP_WARN(node_->get_logger(), "[%s] planning already active", name_.c_str());
+        std::lock_guard<std::mutex> lk(msg_mutex_);
+        plan_error_msg_ = "planning already active";
+        plan_state_.store(PlanState::FAILED, std::memory_order_release);
+        return;
+    }
+
     if (planning_thread_.joinable())
         planning_thread_.join();
 
-    planning_thread_ = std::thread([this] {
-        try
-        {
-            runPlanning();
-        }
-        catch (const std::exception& e)
-        {
-            RCLCPP_ERROR(node_->get_logger(),
-                         "[%s] planning thread threw: %s", name_.c_str(), e.what());
-            std::lock_guard<std::mutex> lk(msg_mutex_);
-            plan_error_msg_ = e.what();
-            plan_state_.store(PlanState::FAILED, std::memory_order_release);
-        }
-        catch (...)
-        {
-            RCLCPP_ERROR(node_->get_logger(),
-                         "[%s] planning thread threw unknown exception", name_.c_str());
-            std::lock_guard<std::mutex> lk(msg_mutex_);
-            plan_error_msg_ = "Unknown exception in planning thread";
-            plan_state_.store(PlanState::FAILED, std::memory_order_release);
-        }
-    });
+    try
+    {
+        planning_thread_ = std::thread([this] {
+            try
+            {
+                runPlanning();
+            }
+            catch (const std::exception& e)
+            {
+                planning_active_.store(false, std::memory_order_release);
+                RCLCPP_ERROR(node_->get_logger(),
+                             "[%s] planning thread threw: %s", name_.c_str(), e.what());
+                std::lock_guard<std::mutex> lk(msg_mutex_);
+                plan_error_msg_ = e.what();
+                plan_state_.store(PlanState::FAILED, std::memory_order_release);
+            }
+            catch (...)
+            {
+                planning_active_.store(false, std::memory_order_release);
+                RCLCPP_ERROR(node_->get_logger(),
+                             "[%s] planning thread threw unknown exception", name_.c_str());
+                std::lock_guard<std::mutex> lk(msg_mutex_);
+                plan_error_msg_ = "Unknown exception in planning thread";
+                plan_state_.store(PlanState::FAILED, std::memory_order_release);
+            }
+        });
+    }
+    catch (const std::exception& e)
+    {
+        planning_active_.store(false, std::memory_order_release);
+        std::lock_guard<std::mutex> lk(msg_mutex_);
+        plan_error_msg_ = std::string("failed to launch planning thread: ") + e.what();
+        plan_state_.store(PlanState::FAILED, std::memory_order_release);
+        RCLCPP_ERROR(node_->get_logger(), "[%s] %s", name_.c_str(), plan_error_msg_.c_str());
+        return;
+    }
 
     RCLCPP_INFO(node_->get_logger(), "[%s] goal accepted — planning started", name_.c_str());
 }
@@ -521,6 +589,9 @@ void MoveToJoint::onStop(StopReason reason)
 {
     if (reason != StopReason::SUCCEEDED)
         cancel_flag_.store(true, std::memory_order_relaxed);
+
+    if (planning_thread_.joinable())
+        planning_thread_.join();
 
     if (reason != StopReason::SUCCEEDED)
         model_updater_.haltCommands();
