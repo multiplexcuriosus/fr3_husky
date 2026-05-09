@@ -45,7 +45,7 @@
 
     <xacro:property name="side_val" value="$(arg side)"/>
     <xacro:property name="robot_ip"
-                    value="${'172.16.5.5' if side_val == 'left' else '172.16.6.6'}"/>
+                    value="${'172.16.3.3' if side_val == 'left' else '172.16.3.3'}"/>
 
     <!-- Virtual -->
     <xacro:if value="$(arg virtual_joint)">

@@ -27,7 +27,7 @@
     <xacro:arg name="mobile" default="false"/>
     <!-- ============================================================= -->
 
-    <xacro:arg name="robot_ips" default="['172.16.5.5','172.16.6.6']" />
+    <xacro:arg name="robot_ips" default="['172.16.3.3','172.16.3.3']" />
     <xacro:property name="robot_ips_list" value="${$(arg robot_ips)}" />
     <xacro:property name="number_of_robots" value = "2"/>
     <xacro:property name="arm_prefixes_list" value="${['left','right']}" />

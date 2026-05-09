@@ -33,7 +33,7 @@
     <xacro:arg name="fix_finger" default="false"/>
     <!-- ============================================================= -->
 
-    <xacro:arg name="robot_ips" default="['172.16.5.5','172.16.6.6']" />
+    <xacro:arg name="robot_ips" default="['172.16.3.3','172.16.3.3']" />
     <xacro:property name="robot_ips_list" value="${$(arg robot_ips)}" />
     <xacro:property name="robot_ips_str" value="${' '.join(robot_ips_list)}" />
 
