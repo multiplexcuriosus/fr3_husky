@@ -139,7 +139,7 @@ def _launch_setup(context, *args, **kwargs):
     )
 
     #  Gripper IPs
-    side_ips = {'left': '172.16.5.5', 'right': '172.16.6.6'}
+    side_ips = {'left': '172.16.3.3', 'right': '172.16.3.3'}
 
     #  Node list
     nodes = []
