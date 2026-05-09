@@ -97,11 +97,15 @@ add_library(${PROJECT_NAME} SHARED
     src/test_fr3_husky_controller.cpp
     src/servers/fr3/joint_trajectory_controller_action_server.cpp
     src/servers/fr3/move_to_joint_action_server.cpp
+    src/servers/fr3/vive_tracker_action_server.cpp
+    src/servers/fr3/cartesian_executor_action_server.cpp
+
+
     src/servers/fr3_husky/joint_trajectory_controller_action_server.cpp
     src/servers/fr3_husky/move_to_joint_action_server.cpp
-    src/servers/fr3/vive_tracker_action_server.cpp
     src/servers/fr3_husky/vive_tracker_action_server.cpp
     src/servers/fr3_husky/husky_move_action_server.cpp
+
 )
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
