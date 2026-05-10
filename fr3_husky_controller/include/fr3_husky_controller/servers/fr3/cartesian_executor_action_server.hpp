@@ -5,9 +5,11 @@
 #include <fr3_husky_msgs/action/omega_haptic.hpp>
 
 #include <geometry_msgs/msg/twist_stamped.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <std_srvs/srv/trigger.hpp>
 
 #include <Eigen/Dense>
+#include <chrono>
 #include <map>
 #include <mutex>
 #include <string>
@@ -24,6 +26,14 @@ public:
     using ComputeResult = typename Base::ComputeResult;
     using StopReason = typename Base::StopReason;
 
+    enum class ExecutorState
+    {
+        STOPPED,
+        ACTIVE,
+        CANCELING,
+        ABORTED
+    };
+
     CartesianExecutor(const std::string& name, const NodePtr& node, ModelUpdaterBase& model_updater);
 
     bool acceptGoal(const ActionT::Goal& goal) override;
@@ -34,17 +44,28 @@ public:
     ResultPtr makeResult(StopReason reason) override;
 
 private:
+    void publishStatus(bool log_status = false);
+    std::string buildStatusMessage() const;
+    std::string executorStateToString(ExecutorState state) const;
+    int64_t getLastCommandAgeMs(const rclcpp::Time& now) const;
+
     void subTwistCallback(const geometry_msgs::msg::TwistStamped::SharedPtr msg);
 
     void handleResetTarget(
         const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
         std::shared_ptr<std_srvs::srv::Trigger::Response> response);
 
+    void handleGetStatus(
+        const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+        std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+
     FR3ModelUpdater& fr3_model_updater_;
 
     rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr twist_sub_;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_pub_;
 
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_target_srv_;
+    rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr get_status_srv_;
 
     std::mutex cmd_mutex_;
     Eigen::Vector3d latest_lin_vel_cmd_{Eigen::Vector3d::Zero()};
@@ -75,6 +96,17 @@ private:
 
     std::string twist_topic_name_;
     std::string reset_target_service_name_;
+    std::string status_topic_name_;
+    std::string get_status_service_name_;
+
+    mutable std::mutex status_mutex_;
+    ExecutorState executor_state_{ExecutorState::STOPPED};
+    rclcpp::Time last_start_time_;
+    rclcpp::Time last_stop_time_;
+    rclcpp::Time last_command_time_;
+    rclcpp::Time last_status_publish_time_;
+    bool stop_in_progress_{false};
+    const std::chrono::milliseconds status_publish_period_{100};
 };
 
 }  // namespace fr3_husky_controller::servers::fr3

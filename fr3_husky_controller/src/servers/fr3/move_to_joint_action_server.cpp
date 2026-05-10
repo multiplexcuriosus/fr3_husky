@@ -1,12 +1,17 @@
 #include <fr3_husky_controller/servers/fr3/move_to_joint_action_server.hpp>
 
 #include <chrono>
+#include <cmath>
+#include <future>
 #include <map>
+#include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 
 #include <action_msgs/msg/goal_status.hpp>
 #include <moveit/move_group_interface/move_group_interface.h>
+#include <rclcpp/executors.hpp>
 #include <rclcpp/parameter_client.hpp>
 
 namespace fr3_husky_controller::servers::fr3
@@ -30,6 +35,25 @@ FR3ModelUpdater& getFR3ModelUpdater(ModelUpdaterBase& model_updater,
     return *p;
 }
 
+std::optional<std::string> extractStatusField(const std::string& message, const std::string& key)
+{
+    const std::string token = key + "=";
+    const auto pos = message.find(token);
+    if (pos == std::string::npos)
+    {
+        return std::nullopt;
+    }
+
+    const auto value_start = pos + token.size();
+    const auto value_end = message.find(' ', value_start);
+    if (value_end == std::string::npos)
+    {
+        return message.substr(value_start);
+    }
+
+    return message.substr(value_start, value_end - value_start);
+}
+
 }  // namespace
 
 // ============================================================
@@ -41,6 +65,31 @@ MoveToJoint::MoveToJoint(const std::string& name, const NodePtr& node,
 : Base(name, node, model_updater),
   fr3_model_updater_(getFR3ModelUpdater(model_updater, name))
 {
+    const auto clock_type = node_->get_clock()->get_clock_type();
+    last_joint_state_stamp_ = rclcpp::Time(0, 0, clock_type);
+    last_joint_state_receive_time_ = rclcpp::Time(0, 0, clock_type);
+
+    require_fresh_joint_state_ = node_->declare_parameter<bool>(
+        name_ + ".require_fresh_joint_state", true);
+    max_joint_state_age_ms_ = node_->declare_parameter<int>(
+        name_ + ".max_joint_state_age_ms", 150);
+    require_fresh_moveit_state_ = node_->declare_parameter<bool>(
+        name_ + ".require_fresh_moveit_state", false);
+    max_moveit_state_age_ms_ = node_->declare_parameter<int>(
+        name_ + ".max_moveit_state_age_ms", 150);
+    require_cartesian_stopped_ = node_->declare_parameter<bool>(
+        name_ + ".require_cartesian_stopped", true);
+    cartesian_get_status_service_ = node_->declare_parameter<std::string>(
+        name_ + ".cartesian_get_status_service", "/cartesian_executor/get_status");
+    cartesian_settle_delay_ms_ = node_->declare_parameter<int>(
+        name_ + ".cartesian_settle_delay_ms", 1500);
+    wait_for_cartesian_status_timeout_ms_ = node_->declare_parameter<int>(
+        name_ + ".wait_for_cartesian_status_timeout_ms", 300);
+    reject_if_cartesian_status_unavailable_ = node_->declare_parameter<bool>(
+        name_ + ".reject_if_cartesian_status_unavailable", true);
+    joint_state_topic_ = node_->declare_parameter<std::string>(
+        name_ + ".joint_state_topic", "/right_fr3/joint_states");
+
     // --- Dedicated node for MoveGroupInterface ---
     // MoveGroupInterface needs its own rclcpp::Node (lifecycle nodes are not
     // accepted). We do NOT assign it to a persistent executor: MoveGroupInterface
@@ -54,6 +103,8 @@ MoveToJoint::MoveToJoint(const std::string& name, const NodePtr& node,
     // --- Action client → fr3_joint_trajectory_controller ---
     jtc_client_ = rclcpp_action::create_client<FJT>(
         node_, "fr3_joint_trajectory_controller");
+    cartesian_status_client_ = node_->create_client<std_srvs::srv::Trigger>(
+        cartesian_get_status_service_);
 
     // --- Subscribe to JTC action status to detect busy state ---
     // If the JTC is already executing a trajectory (e.g. the user started
@@ -77,6 +128,11 @@ MoveToJoint::MoveToJoint(const std::string& name, const NodePtr& node,
             }
             jtc_busy_.store(busy, std::memory_order_relaxed);
         });
+
+    joint_state_sub_ = node_->create_subscription<sensor_msgs::msg::JointState>(
+        joint_state_topic_,
+        10,
+        std::bind(&MoveToJoint::jointStateCallback, this, std::placeholders::_1));
 
     // --- Derive planning group and valid joint prefixes from robot_names ---
     const auto& rnames = model_updater.robot_names_;
@@ -139,6 +195,7 @@ MoveToJoint::MoveToJoint(const std::string& name, const NodePtr& node,
                     moveit_node_, planning_group_,
                     std::shared_ptr<tf2_ros::Buffer>{},
                     rclcpp::Duration::from_seconds(10.0));
+                mgi_->startStateMonitor(std::max(1.0, max_moveit_state_age_ms_ / 1000.0));
                 RCLCPP_INFO(node_->get_logger(),
                             "[%s] MoveGroupInterface ready", name_.c_str());
             }
@@ -228,6 +285,25 @@ void MoveToJoint::runPlanning()
         plan_error_msg_ = "MoveGroupInterface not available — start move_group first";
         plan_state_.store(PlanState::FAILED, std::memory_order_release);
         return;
+    }
+
+    {
+        std::string reason;
+        RCLCPP_INFO(node_->get_logger(), "[fr3_move_to_joint] safety preflight start");
+        if (!runPreflightSafetyChecks(&reason))
+        {
+            RCLCPP_ERROR(node_->get_logger(),
+                         "[fr3_move_to_joint] rejected by safety preflight: %s",
+                         reason.c_str());
+            {
+                std::lock_guard<std::mutex> lk(msg_mutex_);
+                plan_error_msg_ = "Safety preflight failed: " + reason;
+            }
+            plan_state_.store(PlanState::FAILED, std::memory_order_release);
+            return;
+        }
+
+        RCLCPP_INFO(node_->get_logger(), "[fr3_move_to_joint] safety preflight passed");
     }
 
     if (!cancel_flag_.load(std::memory_order_relaxed))
@@ -333,6 +409,25 @@ void MoveToJoint::runPlanning()
         return;
     }
 
+    {
+        std::string reason;
+        if (!runPostPlanSafetyChecks(&reason))
+        {
+            RCLCPP_ERROR(node_->get_logger(),
+                         "[fr3_move_to_joint] rejected by post-plan safety check: %s",
+                         reason.c_str());
+            {
+                std::lock_guard<std::mutex> lk(msg_mutex_);
+                plan_error_msg_ = "Post-plan safety check failed: " + reason;
+            }
+            plan_state_.store(PlanState::FAILED, std::memory_order_release);
+            return;
+        }
+
+        RCLCPP_INFO(node_->get_logger(),
+                    "[fr3_move_to_joint] post-plan safety check passed; preparing handoff");
+    }
+
     // ---- Phase 2: Prepare handoff to fr3_joint_trajectory_controller ----
     if (!jtc_client_->wait_for_action_server(std::chrono::seconds(5)))
     {
@@ -389,6 +484,463 @@ void MoveToJoint::runPlanning()
         };
 
     jtc_client_->async_send_goal(jtc_goal, send_opts);
+}
+
+bool MoveToJoint::validateGoalInputs(std::string* reason) const
+{
+    if (goal_joint_names_.empty())
+    {
+        if (reason)
+        {
+            *reason = "joint_names is empty";
+        }
+        return false;
+    }
+
+    if (goal_joint_names_.size() != goal_target_positions_.size())
+    {
+        if (reason)
+        {
+            std::ostringstream oss;
+            oss << "joint_names.size()=" << goal_joint_names_.size()
+                << " != target_positions.size()=" << goal_target_positions_.size();
+            *reason = oss.str();
+        }
+        return false;
+    }
+
+    if (!valid_joint_prefixes_.empty())
+    {
+        for (const auto& jname : goal_joint_names_)
+        {
+            bool ok = false;
+            for (const auto& prefix : valid_joint_prefixes_)
+            {
+                if (jname.rfind(prefix, 0) == 0)
+                {
+                    ok = true;
+                    break;
+                }
+            }
+            if (!ok)
+            {
+                if (reason)
+                {
+                    std::ostringstream oss;
+                    oss << "joint '" << jname << "' not in planning group '"
+                        << planning_group_ << "'";
+                    *reason = oss.str();
+                }
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+bool MoveToJoint::isJointStateFresh(std::string* reason) const
+{
+    if (!require_fresh_joint_state_)
+    {
+        return true;
+    }
+
+    rclcpp::Time reference_time;
+    const auto now = node_->now();
+
+    {
+        std::lock_guard<std::mutex> lock(joint_state_mutex_);
+        if (!have_joint_state_)
+        {
+            if (reason)
+            {
+                *reason = "joint state missing: no joint state received";
+            }
+            return false;
+        }
+
+        if (last_joint_state_stamp_.nanoseconds() > 0)
+        {
+            reference_time = last_joint_state_stamp_;
+        }
+        else
+        {
+            reference_time = last_joint_state_receive_time_;
+        }
+    }
+
+    const auto age_ms = static_cast<int64_t>((now - reference_time).nanoseconds() / 1000000LL);
+
+    // Reject timestamps that appear to be from the future (> 20 ms ahead).
+    if (age_ms < -20)
+    {
+        if (reason)
+        {
+            std::ostringstream oss;
+            oss << "joint state timestamp is in the future, age_ms=" << age_ms;
+            *reason = oss.str();
+        }
+        return false;
+    }
+
+    if (age_ms > max_joint_state_age_ms_)
+    {
+        if (reason)
+        {
+            std::ostringstream oss;
+            oss << "joint state stale, age=" << age_ms << " ms";
+            *reason = oss.str();
+        }
+        return false;
+    }
+
+    RCLCPP_DEBUG(node_->get_logger(), "[fr3_move_to_joint] joint state age=%ld ms", age_ms);
+    return true;
+}
+
+bool MoveToJoint::isMoveItCurrentStateFresh(std::string* reason)
+{
+    if (!require_fresh_moveit_state_)
+    {
+        return true;
+    }
+
+    if (!mgi_)
+    {
+        if (reason)
+        {
+            *reason = "MoveIt current state unavailable: MoveGroupInterface not available";
+        }
+        return false;
+    }
+
+    const double wait_seconds = std::max(0.001, max_moveit_state_age_ms_ / 1000.0);
+
+    try
+    {
+        if (!mgi_->startStateMonitor(wait_seconds))
+        {
+            if (reason)
+            {
+                std::ostringstream oss;
+                oss << "MoveIt current state unavailable: state monitor did not start within "
+                    << max_moveit_state_age_ms_ << " ms";
+                *reason = oss.str();
+            }
+            return false;
+        }
+
+        // getCurrentState(wait) is treated as an additional availability check.
+        // Primary freshness protection comes from direct /joint_states freshness validation.
+        const auto t_request = node_->now();
+        auto current_state = mgi_->getCurrentState(wait_seconds);
+        if (!current_state)
+        {
+            if (reason)
+            {
+                std::ostringstream oss;
+                oss << "MoveIt current state stale/unavailable: failed to fetch current state within "
+                    << max_moveit_state_age_ms_ << " ms";
+                *reason = oss.str();
+            }
+            return false;
+        }
+
+        const auto wait_ms = (node_->now() - t_request).nanoseconds() / 1000000LL;
+        RCLCPP_INFO(node_->get_logger(),
+                    "[fr3_move_to_joint] MoveIt current state fresh (waited %ld ms, limit=%ld ms)",
+                    static_cast<long>(wait_ms), static_cast<long>(max_moveit_state_age_ms_));
+    }
+    catch (const std::exception& e)
+    {
+        if (reason)
+        {
+            *reason = std::string("MoveIt current state stale/unavailable: ") + e.what();
+        }
+        return false;
+    }
+
+    return true;
+}
+
+bool MoveToJoint::isCartesianExecutorSafe(std::string* reason)
+{
+    if (!require_cartesian_stopped_)
+    {
+        return true;
+    }
+
+    if (!cartesian_status_client_)
+    {
+        if (reason)
+        {
+            *reason = "cartesian executor status client not available";
+        }
+        return false;
+    }
+
+    const auto timeout = std::chrono::milliseconds(wait_for_cartesian_status_timeout_ms_);
+    if (!cartesian_status_client_->wait_for_service(timeout))
+    {
+        if (reason)
+        {
+            std::ostringstream oss;
+            oss << "cartesian executor status service unavailable after "
+                << wait_for_cartesian_status_timeout_ms_ << " ms";
+            *reason = oss.str();
+        }
+        return false;
+    }
+
+    auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
+    auto future = cartesian_status_client_->async_send_request(request);
+    if (future.wait_for(timeout) != std::future_status::ready)
+    {
+        if (reason)
+        {
+            std::ostringstream oss;
+            oss << "cartesian executor status request timed out after "
+                << wait_for_cartesian_status_timeout_ms_ << " ms";
+            *reason = oss.str();
+        }
+        RCLCPP_INFO(node_->get_logger(),
+                    "[fr3_move_to_joint] rejected: Cartesian status service timeout");
+        return false;
+    }
+
+    std::shared_ptr<std_srvs::srv::Trigger::Response> response;
+    try
+    {
+        response = future.get();
+    }
+    catch (const std::exception& e)
+    {
+        if (reason)
+        {
+            *reason = std::string("cartesian executor status request failed: ") + e.what();
+        }
+        return false;
+    }
+
+    if (!response)
+    {
+        if (reason)
+        {
+            *reason = "cartesian executor status request returned no response";
+        }
+        return false;
+    }
+
+    const std::string& message = response->message;
+    if (!response->success)
+    {
+        if (reason)
+        {
+            *reason = "cartesian executor not safe: " + message;
+        }
+        return false;
+    }
+
+    const auto state = extractStatusField(message, "state");
+    if (!state)
+    {
+        if (reason)
+        {
+            *reason = "cartesian executor status parse failure: missing state";
+        }
+        return false;
+    }
+
+    if (*state == "ACTIVE" || *state == "CANCELING" || *state == "ABORTED")
+    {
+        if (reason)
+        {
+            *reason = "cartesian executor state=" + *state;
+        }
+        return false;
+    }
+
+    if (*state != "STOPPED")
+    {
+        if (reason)
+        {
+            *reason = "cartesian executor unsafe state=" + *state;
+        }
+        return false;
+    }
+
+    const auto stop_in_progress = extractStatusField(message, "stop_in_progress");
+    if (stop_in_progress && *stop_in_progress == "true")
+    {
+        if (reason)
+        {
+            *reason = "cartesian executor stop_in_progress=true";
+        }
+        return false;
+    }
+
+    const auto last_stop_time = extractStatusField(message, "last_stop_time");
+    if (!last_stop_time)
+    {
+        if (reason)
+        {
+            *reason = "cartesian executor status parse failure: missing last_stop_time";
+        }
+        return false;
+    }
+
+    double last_stop_seconds = 0.0;
+    try
+    {
+        last_stop_seconds = std::stod(*last_stop_time);
+    }
+    catch (const std::exception&)
+    {
+        if (reason)
+        {
+            *reason = "invalid last_stop_time";
+        }
+        RCLCPP_INFO(node_->get_logger(),
+                    "[fr3_move_to_joint] rejected: invalid last_stop_time");
+        return false;
+    }
+
+    if (!std::isfinite(last_stop_seconds) || last_stop_seconds <= 0.0)
+    {
+        if (reason)
+        {
+            *reason = "invalid last_stop_time";
+        }
+        RCLCPP_INFO(node_->get_logger(),
+                    "[fr3_move_to_joint] rejected: invalid last_stop_time");
+        return false;
+    }
+
+    const auto now_seconds = node_->now().seconds();
+    const double since_stop_ms = (now_seconds - last_stop_seconds) * 1000.0;
+    if (since_stop_ms < -20.0)
+    {
+        if (reason)
+        {
+            *reason = "cartesian executor stop timestamp is in the future";
+        }
+        return false;
+    }
+
+    if (since_stop_ms < static_cast<double>(cartesian_settle_delay_ms_))
+    {
+        if (reason)
+        {
+            std::ostringstream oss;
+            oss << "cartesian executor stopped only " << static_cast<int64_t>(since_stop_ms)
+                << " ms ago";
+            *reason = oss.str();
+        }
+        return false;
+    }
+
+    return true;
+}
+
+bool MoveToJoint::runPreflightSafetyChecks(std::string* reason)
+{
+    std::string local_reason;
+
+    if (!validateGoalInputs(&local_reason))
+    {
+        if (reason)
+        {
+            *reason = local_reason;
+        }
+        return false;
+    }
+
+    if (!isJointStateFresh(&local_reason))
+    {
+        if (reason)
+        {
+            *reason = local_reason;
+        }
+        return false;
+    }
+
+    if (!isCartesianExecutorSafe(&local_reason))
+    {
+        if (reason)
+        {
+            *reason = local_reason;
+        }
+        return false;
+    }
+
+    if (!isMoveItCurrentStateFresh(&local_reason))
+    {
+        if (reason)
+        {
+            *reason = local_reason;
+        }
+        return false;
+    }
+
+    return true;
+}
+
+bool MoveToJoint::runPostPlanSafetyChecks(std::string* reason)
+{
+    std::string local_reason;
+
+    if (!isJointStateFresh(&local_reason))
+    {
+        if (reason)
+        {
+            *reason = local_reason;
+        }
+        return false;
+    }
+
+    if (!isCartesianExecutorSafe(&local_reason))
+    {
+        if (reason)
+        {
+            *reason = local_reason;
+        }
+        return false;
+    }
+
+    if (require_fresh_moveit_state_ && !isMoveItCurrentStateFresh(&local_reason))
+    {
+        if (reason)
+        {
+            *reason = local_reason;
+        }
+        return false;
+    }
+
+    return true;
+}
+
+void MoveToJoint::jointStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg)
+{
+    if (!msg)
+    {
+        return;
+    }
+
+    const auto receive_time = node_->now();
+    const auto stamp = rclcpp::Time(msg->header.stamp);
+
+    std::lock_guard<std::mutex> lock(joint_state_mutex_);
+    have_joint_state_ = true;
+    last_joint_state_receive_time_ = receive_time;
+    if (stamp.nanoseconds() > 0)
+    {
+        last_joint_state_stamp_ = stamp;
+    }
+    else
+    {
+        last_joint_state_stamp_ = rclcpp::Time(0, 0, node_->get_clock()->get_clock_type());
+    }
 }
 
 // ============================================================
@@ -477,7 +1029,19 @@ void MoveToJoint::onGoalAccepted(const ActionT::Goal& goal)
         planning_thread_.join();
     }
 
-    // Launch background planning (wrapped in catch-all to prevent std::terminate)
+    RCLCPP_INFO(node_->get_logger(), "[%s] goal accepted — awaiting safety preflight",
+                name_.c_str());
+}
+
+void MoveToJoint::onStart()
+{
+    // Latch current joint positions; writeHoldCommands() uses these every
+    // control cycle while planning is in progress.
+    fr3_model_updater_.setInitFromCurrent();
+    q_hold_           = fr3_model_updater_.q_total_;
+    result_error_code_ = ActionT::Result::ERROR_PLAN_FAILED;  // default until success
+
+    // Launch background planning only after safety preflight passes.
     planning_thread_ = std::thread([this] {
         try
         {
@@ -501,17 +1065,6 @@ void MoveToJoint::onGoalAccepted(const ActionT::Goal& goal)
         }
     });
 
-    RCLCPP_INFO(node_->get_logger(), "[%s] goal accepted — planning started",
-                name_.c_str());
-}
-
-void MoveToJoint::onStart()
-{
-    // Latch current joint positions; writeHoldCommands() uses these every
-    // control cycle while planning is in progress.
-    fr3_model_updater_.setInitFromCurrent();
-    q_hold_           = fr3_model_updater_.q_total_;
-    result_error_code_ = ActionT::Result::ERROR_PLAN_FAILED;  // default until success
     RCLCPP_INFO(node_->get_logger(), "[%s] started, holding position during planning",
                 name_.c_str());
 }

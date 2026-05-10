@@ -200,8 +200,8 @@ ros2 launch fr3_husky_controller fr3_husky_controller.launch.py \
 
 ## Notes
 - Default FR3 IPs in launch files are hardcoded:
-  - left arm: `172.16.5.5`
-  - right arm: `172.16.6.6`
+  - left arm: `172.16.3.3`
+  - right arm: `172.16.3.3`
 - For real hardware, verify network setup and safety conditions before launching controllers.
 
 ## TODO

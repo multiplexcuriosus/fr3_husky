@@ -13,6 +13,8 @@
 #include <action_msgs/msg/goal_status_array.hpp>
 #include <control_msgs/action/follow_joint_trajectory.hpp>
 #include <moveit/move_group_interface/move_group_interface.h>
+#include <sensor_msgs/msg/joint_state.hpp>
+#include <std_srvs/srv/trigger.hpp>
 
 #include <fr3_husky_msgs/action/move_to_joint.hpp>
 
@@ -80,6 +82,15 @@ private:
      *  fr3_joint_trajectory_controller. */
     void runPlanning();
 
+    bool validateGoalInputs(std::string* reason = nullptr) const;
+    bool isJointStateFresh(std::string* reason = nullptr) const;
+    bool isMoveItCurrentStateFresh(std::string* reason = nullptr);
+    bool isCartesianExecutorSafe(std::string* reason = nullptr);
+    bool runPreflightSafetyChecks(std::string* reason = nullptr);
+    bool runPostPlanSafetyChecks(std::string* reason = nullptr);
+
+    void jointStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg);
+
     // ---- Planning group (derived from robot_names at construction) -----------
     /** MoveIt planning group name, e.g. "left_fr3_arm" / "dual_fr3_arm". */
     std::string planning_group_;
@@ -95,9 +106,11 @@ private:
 
     // ---- FollowJointTrajectory client → fr3_joint_trajectory_controller ------
     rclcpp_action::Client<FJT>::SharedPtr jtc_client_;
+    rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr cartesian_status_client_;
 
     // ---- JTC busy detection (subscribe to its action status topic) -----------
     rclcpp::Subscription<action_msgs::msg::GoalStatusArray>::SharedPtr jtc_status_sub_;
+    rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
     std::atomic<bool> jtc_busy_{false};
 
     // ---- Per-goal planning state (reset on every new goal) -------------------
@@ -120,6 +133,23 @@ private:
 
     // ---- Result bookkeeping --------------------------------------------------
     int32_t result_error_code_{0};
+
+    // ---- Safety inputs / parameters ------------------------------------------
+    mutable std::mutex joint_state_mutex_;
+    bool have_joint_state_{false};
+    rclcpp::Time last_joint_state_stamp_;
+    rclcpp::Time last_joint_state_receive_time_;
+
+    bool require_fresh_joint_state_{true};
+    int max_joint_state_age_ms_{150};
+    bool require_fresh_moveit_state_{true};
+    int max_moveit_state_age_ms_{150};
+    bool require_cartesian_stopped_{true};
+    std::string cartesian_get_status_service_{"/cartesian_executor/get_status"};
+    int cartesian_settle_delay_ms_{1500};
+    int wait_for_cartesian_status_timeout_ms_{300};
+    bool reject_if_cartesian_status_unavailable_{true};
+    std::string joint_state_topic_{"/right_fr3/joint_states"};
 };
 
 }  // namespace fr3_husky_controller::servers::fr3

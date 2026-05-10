@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <iomanip>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
@@ -38,10 +40,20 @@ CartesianExecutor::CartesianExecutor(
 : Base(name, node, model_updater),
   fr3_model_updater_(getFR3ModelUpdater(model_updater, name))
 {
+    const auto clock_type = node_->get_clock()->get_clock_type();
+    last_start_time_ = rclcpp::Time(0, 0, clock_type);
+    last_stop_time_ = rclcpp::Time(0, 0, clock_type);
+    last_command_time_ = rclcpp::Time(0, 0, clock_type);
+    last_status_publish_time_ = rclcpp::Time(0, 0, clock_type);
+
     twist_topic_name_ = node_->declare_parameter<std::string>(
         name_ + ".twist_topic_name", "/cartesian_cmd/twist");
     reset_target_service_name_ = node_->declare_parameter<std::string>(
         name_ + ".reset_target_service_name", "/cartesian_executor/reset_target");
+    status_topic_name_ = node_->declare_parameter<std::string>(
+        name_ + ".status_topic_name", "/cartesian_executor/status");
+    get_status_service_name_ = node_->declare_parameter<std::string>(
+        name_ + ".get_status_service_name", "/cartesian_executor/get_status");
 
     vel_lpf_tau_ = node_->declare_parameter<double>(
         name_ + ".vel_lpf_tau", 0.03);
@@ -76,10 +88,20 @@ CartesianExecutor::CartesianExecutor(
         10,
         std::bind(&CartesianExecutor::subTwistCallback, this, std::placeholders::_1));
 
+    status_pub_ = node_->create_publisher<std_msgs::msg::String>(status_topic_name_, 10);
+
     reset_target_srv_ = node_->create_service<std_srvs::srv::Trigger>(
         reset_target_service_name_,
         std::bind(
             &CartesianExecutor::handleResetTarget,
+            this,
+            std::placeholders::_1,
+            std::placeholders::_2));
+
+    get_status_srv_ = node_->create_service<std_srvs::srv::Trigger>(
+        get_status_service_name_,
+        std::bind(
+            &CartesianExecutor::handleGetStatus,
             this,
             std::placeholders::_1,
             std::placeholders::_2));
@@ -93,6 +115,10 @@ CartesianExecutor::CartesianExecutor(
     RCLCPP_INFO(node_->get_logger(), "[%s] CartesianExecutor created", name_.c_str());
     RCLCPP_INFO(node_->get_logger(), "[%s] twist topic: %s", name_.c_str(), twist_topic_name_.c_str());
     RCLCPP_INFO(node_->get_logger(), "[%s] reset service: %s", name_.c_str(), reset_target_service_name_.c_str());
+    RCLCPP_INFO(node_->get_logger(), "[%s] status topic: %s", name_.c_str(), status_topic_name_.c_str());
+    RCLCPP_INFO(node_->get_logger(), "[%s] get_status service: %s", name_.c_str(), get_status_service_name_.c_str());
+
+    publishStatus(true);
 }
 
 bool CartesianExecutor::acceptGoal(const ActionT::Goal& goal)
@@ -164,6 +190,13 @@ void CartesianExecutor::onStart()
     filtered_lin_vel_cmd_.setZero();
     reset_target_requested_ = true;
 
+    {
+        std::lock_guard<std::mutex> lock(status_mutex_);
+        executor_state_ = ExecutorState::ACTIVE;
+        stop_in_progress_ = false;
+        last_start_time_ = node_->now();
+    }
+
     ee_data.clear();
     ee_data[control_ee_name_] = drc::TaskSpaceData::Zero();
     ee_data[control_ee_name_].x = fr3_model_updater_.robot_data_->getPose(control_ee_name_);
@@ -175,6 +208,9 @@ void CartesianExecutor::onStart()
     target_pose_ = ee_data[control_ee_name_].x;
     target_rotation_ = target_pose_.linear();
 
+    RCLCPP_INFO(node_->get_logger(), "[cartesian_executor] state ACTIVE");
+    publishStatus(true);
+
     RCLCPP_INFO(node_->get_logger(), "[%s] started", name_.c_str());
 }
 
@@ -182,6 +218,22 @@ CartesianExecutor::ComputeResult CartesianExecutor::compute(
     const rclcpp::Time& time,
     const rclcpp::Duration& /*period*/)
 {
+    bool should_publish_status = false;
+    {
+        std::lock_guard<std::mutex> lock(status_mutex_);
+        if (last_status_publish_time_.nanoseconds() == 0 ||
+            (time - last_status_publish_time_) >= rclcpp::Duration::from_seconds(status_publish_period_.count() / 1000.0))
+        {
+            last_status_publish_time_ = time;
+            should_publish_status = true;
+        }
+    }
+
+    if (should_publish_status)
+    {
+        publishStatus(false);
+    }
+
     ee_data[control_ee_name_].x    = fr3_model_updater_.robot_data_->getPose(control_ee_name_);
     ee_data[control_ee_name_].xdot = fr3_model_updater_.robot_data_->getVelocity(control_ee_name_);
     ee_data[control_ee_name_].xddot.setZero();
@@ -320,9 +372,24 @@ CartesianExecutor::ComputeResult CartesianExecutor::compute(
 
 void CartesianExecutor::onStop(StopReason reason)
 {
+    {
+        std::lock_guard<std::mutex> lock(status_mutex_);
+        executor_state_ = ExecutorState::CANCELING;
+        stop_in_progress_ = true;
+    }
+    RCLCPP_INFO(node_->get_logger(), "[cartesian_executor] state CANCELING");
+    publishStatus(true);
+
     model_updater_.haltCommands();
 
     filtered_lin_vel_cmd_.setZero();
+
+    if (!control_ee_name_.empty() && fr3_model_updater_.robot_data_->hasLinkFrame(control_ee_name_))
+    {
+        const auto current_pose = fr3_model_updater_.robot_data_->getPose(control_ee_name_);
+        target_pose_ = current_pose;
+        target_rotation_ = current_pose.linear();
+    }
 
     {
         std::lock_guard<std::mutex> lock(cmd_mutex_);
@@ -330,10 +397,40 @@ void CartesianExecutor::onStop(StopReason reason)
         have_twist_cmd_ = false;
     }
 
+    const auto stop_time = node_->now();
+    ExecutorState final_state = ExecutorState::STOPPED;
+    if (reason == StopReason::ABORTED)
+    {
+        final_state = ExecutorState::ABORTED;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(status_mutex_);
+        last_stop_time_ = stop_time;
+        stop_in_progress_ = false;
+        executor_state_ = final_state;
+    }
+
     const char* reason_str = "none";
     if (reason == StopReason::CANCELED)  reason_str = "canceled";
     if (reason == StopReason::SUCCEEDED) reason_str = "succeeded";
     if (reason == StopReason::ABORTED)   reason_str = "aborted";
+
+    if (final_state == ExecutorState::ABORTED)
+    {
+        RCLCPP_INFO(
+            node_->get_logger(),
+            "[cartesian_executor] state ABORTED, last_stop_time=%s",
+            buildStatusMessage().c_str());
+    }
+    else
+    {
+        RCLCPP_INFO(
+            node_->get_logger(),
+            "[cartesian_executor] state STOPPED, last_stop_time=%.6f",
+            stop_time.seconds());
+    }
+    publishStatus(true);
 
     RCLCPP_INFO(node_->get_logger(), "[%s] stopped (%s)", name_.c_str(), reason_str);
 }
@@ -347,13 +444,20 @@ CartesianExecutor::ResultPtr CartesianExecutor::makeResult(StopReason /*reason*/
 
 void CartesianExecutor::subTwistCallback(const geometry_msgs::msg::TwistStamped::SharedPtr msg)
 {
+    const auto now = node_->now();
+
     std::lock_guard<std::mutex> lock(cmd_mutex_);
 
     latest_lin_vel_cmd_.x() = msg->twist.linear.x;
     latest_lin_vel_cmd_.y() = msg->twist.linear.y;
     latest_lin_vel_cmd_.z() = msg->twist.linear.z;
-    latest_cmd_stamp_ = node_->now();
+    latest_cmd_stamp_ = now;
     have_twist_cmd_ = true;
+
+    {
+        std::lock_guard<std::mutex> status_lock(status_mutex_);
+        last_command_time_ = now;
+    }
 }
 
 void CartesianExecutor::handleResetTarget(
@@ -366,6 +470,101 @@ void CartesianExecutor::handleResetTarget(
     response->message = "Cartesian executor target reset requested.";
 
     RCLCPP_INFO(node_->get_logger(), "[%s] target reset requested", name_.c_str());
+}
+
+void CartesianExecutor::handleGetStatus(
+    const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
+    std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+{
+    ExecutorState state;
+
+    {
+        std::lock_guard<std::mutex> lock(status_mutex_);
+        state = executor_state_;
+    }
+
+    response->success = (state == ExecutorState::STOPPED);
+    response->message = buildStatusMessage();
+    RCLCPP_INFO(node_->get_logger(), "[cartesian_executor] status: %s", response->message.c_str());
+}
+
+void CartesianExecutor::publishStatus(bool log_status)
+{
+    if (!status_pub_)
+    {
+        return;
+    }
+
+    std_msgs::msg::String msg;
+    msg.data = buildStatusMessage();
+    status_pub_->publish(msg);
+
+    if (log_status)
+    {
+        RCLCPP_INFO(node_->get_logger(), "[cartesian_executor] status: %s", msg.data.c_str());
+    }
+}
+
+std::string CartesianExecutor::buildStatusMessage() const
+{
+    ExecutorState executor_state;
+    rclcpp::Time last_start_time;
+    rclcpp::Time last_stop_time;
+    bool stop_in_progress;
+
+    {
+        std::lock_guard<std::mutex> lock(status_mutex_);
+        executor_state = executor_state_;
+        last_start_time = last_start_time_;
+        last_stop_time = last_stop_time_;
+        stop_in_progress = stop_in_progress_;
+    }
+
+    const auto now = node_->now();
+    const auto last_cmd_age_ms = getLastCommandAgeMs(now);
+
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(6)
+        << "state=" << executorStateToString(executor_state)
+        << " last_start_time=" << last_start_time.seconds()
+        << " last_stop_time=" << last_stop_time.seconds()
+        << " stop_in_progress=" << (stop_in_progress ? "true" : "false")
+        << " last_cmd_age_ms=" << last_cmd_age_ms;
+    return oss.str();
+}
+
+std::string CartesianExecutor::executorStateToString(ExecutorState state) const
+{
+    switch (state)
+    {
+        case ExecutorState::STOPPED:
+            return "STOPPED";
+        case ExecutorState::ACTIVE:
+            return "ACTIVE";
+        case ExecutorState::CANCELING:
+            return "CANCELING";
+        case ExecutorState::ABORTED:
+            return "ABORTED";
+        default:
+            return "UNKNOWN";
+    }
+}
+
+int64_t CartesianExecutor::getLastCommandAgeMs(const rclcpp::Time& now) const
+{
+    rclcpp::Time last_command_time;
+
+    {
+        std::lock_guard<std::mutex> lock(status_mutex_);
+        last_command_time = last_command_time_;
+    }
+
+    if (last_command_time.nanoseconds() == 0)
+    {
+        return -1;
+    }
+
+    return static_cast<int64_t>((now - last_command_time).nanoseconds() / 1000000LL);
 }
 
 // Register this server into global registry
