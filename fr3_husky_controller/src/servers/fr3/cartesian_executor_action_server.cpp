@@ -3,6 +3,7 @@
 #include <fr3_husky_controller/utils/dyros_math.h>
 
 #include <algorithm>
+#include <cinttypes>
 #include <cmath>
 #include <cstdint>
 #include <iomanip>
@@ -109,6 +110,8 @@ CartesianExecutor::CartesianExecutor(
     filtered_lin_vel_cmd_.setZero();
     target_pose_.setIdentity();
     target_rotation_.setIdentity();
+
+    timing_last_report_time_ = std::chrono::steady_clock::now();
 
     ee_data.clear();
 
@@ -218,6 +221,8 @@ CartesianExecutor::ComputeResult CartesianExecutor::compute(
     const rclcpp::Time& time,
     const rclcpp::Duration& /*period*/)
 {
+    const auto timing_start = std::chrono::steady_clock::now();
+
     bool should_publish_status = false;
     {
         std::lock_guard<std::mutex> lock(status_mutex_);
@@ -229,10 +234,10 @@ CartesianExecutor::ComputeResult CartesianExecutor::compute(
         }
     }
 
-    if (should_publish_status)
-    {
-        publishStatus(false);
-    }
+    // if (should_publish_status)
+    // {
+    //     publishStatus(false);
+    // }
 
     ee_data[control_ee_name_].x    = fr3_model_updater_.robot_data_->getPose(control_ee_name_);
     ee_data[control_ee_name_].xdot = fr3_model_updater_.robot_data_->getVelocity(control_ee_name_);
@@ -362,12 +367,66 @@ CartesianExecutor::ComputeResult CartesianExecutor::compute(
     fr3_model_updater_.writeCommand(
         fr3_model_updater_.torque_desired_total_ - fr3_model_updater_.g_total_);
 
-    auto fb = std::make_shared<ActionT::Feedback>();
-    fb->is_qp_solved = is_qp_solved;
-    fb->time_verbose = time_verbose;
-    publishFeedback(fb);
+    // auto fb = std::make_shared<ActionT::Feedback>();
+    // fb->is_qp_solved = is_qp_solved;
+    // fb->time_verbose = time_verbose;
+    // publishFeedback(fb);
+
+    updateComputeTimingDebug(timing_start);
 
     return ComputeResult::RUNNING;
+}
+
+void CartesianExecutor::updateComputeTimingDebug(
+    std::chrono::steady_clock::time_point start_time)
+{
+    if (!enable_compute_timing_debug_)
+    {
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    const double compute_us =
+        static_cast<double>(
+            std::chrono::duration_cast<std::chrono::microseconds>(now - start_time).count());
+
+    if (compute_us > timing_max_compute_us_)
+    {
+        timing_max_compute_us_ = compute_us;
+    }
+    if (compute_us > 800.0)
+    {
+        ++timing_overrun_800us_;
+    }
+    if (compute_us > 1000.0)
+    {
+        ++timing_overrun_1000us_;
+    }
+    ++timing_call_count_;
+
+    const double elapsed_report_s =
+        static_cast<double>(
+            std::chrono::duration_cast<std::chrono::microseconds>(now - timing_last_report_time_).count())
+        * 1e-6;
+
+    if (elapsed_report_s >= 1.0)
+    {
+        RCLCPP_INFO(
+            node_->get_logger(),
+            "[cartesian_executor timing] compute_us_current=%.1f compute_us_max=%.1f"
+            " calls=%" PRIu64 " overruns_gt_800us=%" PRIu64 " overruns_gt_1000us=%" PRIu64,
+            compute_us,
+            timing_max_compute_us_,
+            timing_call_count_,
+            timing_overrun_800us_,
+            timing_overrun_1000us_);
+
+        timing_last_report_time_ = now;
+        timing_max_compute_us_   = 0.0;
+        timing_overrun_800us_    = 0;
+        timing_overrun_1000us_   = 0;
+        timing_call_count_       = 0;
+    }
 }
 
 void CartesianExecutor::onStop(StopReason reason)

@@ -49,6 +49,8 @@ private:
     std::string executorStateToString(ExecutorState state) const;
     int64_t getLastCommandAgeMs(const rclcpp::Time& now) const;
 
+    void updateComputeTimingDebug(std::chrono::steady_clock::time_point start_time);
+
     void subTwistCallback(const geometry_msgs::msg::TwistStamped::SharedPtr msg);
 
     void handleResetTarget(
@@ -107,6 +109,14 @@ private:
     rclcpp::Time last_status_publish_time_;
     bool stop_in_progress_{false};
     const std::chrono::milliseconds status_publish_period_{100};
+
+    // --- Compute timing diagnostics ---
+    bool enable_compute_timing_debug_{true};
+    uint64_t timing_call_count_{0};
+    uint64_t timing_overrun_800us_{0};
+    uint64_t timing_overrun_1000us_{0};
+    double   timing_max_compute_us_{0.0};
+    std::chrono::steady_clock::time_point timing_last_report_time_;
 };
 
 }  // namespace fr3_husky_controller::servers::fr3
