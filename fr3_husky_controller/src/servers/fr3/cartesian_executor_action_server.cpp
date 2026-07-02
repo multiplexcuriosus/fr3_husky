@@ -60,6 +60,10 @@ CartesianExecutor::CartesianExecutor(
         name_ + ".vel_lpf_tau", 0.03);
     cmd_timeout_sec_ = node_->declare_parameter<double>(
         name_ + ".cmd_timeout_sec", 0.20);
+    linear_twist_frame_ = node_->declare_parameter<std::string>(
+        name_ + ".linear_twist_frame", "base");
+    angular_twist_frame_ = node_->declare_parameter<std::string>(
+        name_ + ".angular_twist_frame", "ee");
 
     workspace_min_ << 0.20, -0.45, 0.05;
     workspace_max_ << 0.75,  0.45, 0.65;
@@ -108,6 +112,7 @@ CartesianExecutor::CartesianExecutor(
             std::placeholders::_2));
 
     filtered_lin_vel_cmd_.setZero();
+    filtered_ang_vel_cmd_.setZero();
     target_pose_.setIdentity();
     target_rotation_.setIdentity();
 
@@ -120,6 +125,8 @@ CartesianExecutor::CartesianExecutor(
     RCLCPP_INFO(node_->get_logger(), "[%s] reset service: %s", name_.c_str(), reset_target_service_name_.c_str());
     RCLCPP_INFO(node_->get_logger(), "[%s] status topic: %s", name_.c_str(), status_topic_name_.c_str());
     RCLCPP_INFO(node_->get_logger(), "[%s] get_status service: %s", name_.c_str(), get_status_service_name_.c_str());
+    RCLCPP_INFO(node_->get_logger(), "[%s] linear twist frame: %s", name_.c_str(), linear_twist_frame_.c_str());
+    RCLCPP_INFO(node_->get_logger(), "[%s] angular twist frame: %s", name_.c_str(), angular_twist_frame_.c_str());
 
     publishStatus(true);
 }
@@ -163,8 +170,8 @@ void CartesianExecutor::onGoalAccepted(const ActionT::Goal& goal)
     control_mode_ = goal.mode;
     control_ee_name_ = goal.ee_name;
 
-    // Keep same behavior as old PS4 server: fixed orientation for now.
-    move_ori_ = false;
+    // Respect orientation motion control from the incoming teleop action goal.
+    move_ori_ = goal.move_orientation;
 
     // These are kept for compatibility with the OmegaHaptic action type.
     // In this executor, the input manager should usually do the teleop-side scaling already.
@@ -175,10 +182,12 @@ void CartesianExecutor::onGoalAccepted(const ActionT::Goal& goal)
 
     RCLCPP_INFO(
         node_->get_logger(),
-        "[%s] Goal accepted: mode=%d, ee_name=%s",
-        name_.c_str(),
+        "[cartesian_executor] goal accepted: mode=%d, ee=%s, move_orientation=%s, lin_mult=%.3f, ang_mult=%.3f",
         control_mode_,
-        control_ee_name_.c_str());
+        control_ee_name_.c_str(),
+        move_ori_ ? "true" : "false",
+        haptic_lin_vel_multiplier_,
+        haptic_ang_vel_multiplier_);
 }
 
 void CartesianExecutor::onStart()
@@ -186,11 +195,13 @@ void CartesianExecutor::onStart()
     {
         std::lock_guard<std::mutex> lock(cmd_mutex_);
         latest_lin_vel_cmd_.setZero();
+        latest_ang_vel_cmd_.setZero();
         have_twist_cmd_ = false;
         latest_cmd_stamp_ = node_->now();
     }
 
     filtered_lin_vel_cmd_.setZero();
+    filtered_ang_vel_cmd_.setZero();
     reset_target_requested_ = true;
 
     {
@@ -250,11 +261,13 @@ CartesianExecutor::ComputeResult CartesianExecutor::compute(
         target_pose_ = ee_data[control_ee_name_].x;
         target_rotation_ = target_pose_.linear();
         filtered_lin_vel_cmd_.setZero();
+        filtered_ang_vel_cmd_.setZero();
 
         RCLCPP_INFO(node_->get_logger(), "[%s] target pose reset to current EE pose", name_.c_str());
     }
 
-    Eigen::Vector3d raw_lin_cmd_local = Eigen::Vector3d::Zero();
+    Eigen::Vector3d raw_lin_cmd_input = Eigen::Vector3d::Zero();
+    Eigen::Vector3d raw_ang_cmd_input = Eigen::Vector3d::Zero();
 
     {
         std::lock_guard<std::mutex> lock(cmd_mutex_);
@@ -264,23 +277,73 @@ CartesianExecutor::ComputeResult CartesianExecutor::compute(
             const double cmd_age = (time - latest_cmd_stamp_).seconds();
             if (cmd_age <= cmd_timeout_sec_)
             {
-                // Incoming twist is interpreted in the TCP / EE local frame.
-                raw_lin_cmd_local = latest_lin_vel_cmd_ * haptic_lin_vel_multiplier_;
+                // Incoming twist frame is configurable.
+                // Internally, raw_lin_cmd and raw_ang_cmd are converted to base-frame commands.
+                raw_lin_cmd_input = latest_lin_vel_cmd_ * haptic_lin_vel_multiplier_;
+                if (move_ori_)
+                {
+                    raw_ang_cmd_input = latest_ang_vel_cmd_ * haptic_ang_vel_multiplier_;
+                }
             }
             else
             {
-                raw_lin_cmd_local.setZero();
+                raw_lin_cmd_input.setZero();
+                raw_ang_cmd_input.setZero();
+                latest_lin_vel_cmd_.setZero();
+                latest_ang_vel_cmd_.setZero();
+                filtered_lin_vel_cmd_.setZero();
+                filtered_ang_vel_cmd_.setZero();
+                have_twist_cmd_ = false;
             }
         }
     }
 
-    // Rotate TCP-local command into the base frame.
     const Eigen::Matrix3d R_base_ee = ee_data[control_ee_name_].x.linear();
-    const Eigen::Vector3d raw_lin_cmd = R_base_ee * raw_lin_cmd_local;
+    Eigen::Vector3d raw_lin_cmd = Eigen::Vector3d::Zero();
+    Eigen::Vector3d raw_ang_cmd = Eigen::Vector3d::Zero();
+
+    if (linear_twist_frame_ == "ee")
+    {
+        raw_lin_cmd = R_base_ee * raw_lin_cmd_input;
+    }
+    else if (linear_twist_frame_ == "base")
+    {
+        raw_lin_cmd = raw_lin_cmd_input;
+    }
+    else
+    {
+        RCLCPP_WARN_THROTTLE(
+            node_->get_logger(),
+            *node_->get_clock(),
+            2000,
+            "[%s] invalid linear_twist_frame '%s'; expected 'ee' or 'base'. Zeroing linear command.",
+            name_.c_str(),
+            linear_twist_frame_.c_str());
+    }
+
+    if (angular_twist_frame_ == "ee")
+    {
+        raw_ang_cmd = R_base_ee * raw_ang_cmd_input;
+    }
+    else if (angular_twist_frame_ == "base")
+    {
+        raw_ang_cmd = raw_ang_cmd_input;
+    }
+    else
+    {
+        RCLCPP_WARN_THROTTLE(
+            node_->get_logger(),
+            *node_->get_clock(),
+            2000,
+            "[%s] invalid angular_twist_frame '%s'; expected 'ee' or 'base'. Zeroing angular command.",
+            name_.c_str(),
+            angular_twist_frame_.c_str());
+    }
 
     // Simple first-order low-pass filter.
     const double alpha = std::exp(-fr3_model_updater_.dt_ / vel_lpf_tau_);
     filtered_lin_vel_cmd_ = alpha * filtered_lin_vel_cmd_ + (1.0 - alpha) * raw_lin_cmd;
+    filtered_ang_vel_cmd_ = alpha * filtered_ang_vel_cmd_ + (1.0 - alpha) * raw_ang_cmd;
 
     Eigen::Vector6d target_vel = Eigen::Vector6d::Zero();
 
@@ -292,8 +355,51 @@ CartesianExecutor::ComputeResult CartesianExecutor::compute(
     p.z() = clamp(p.z(), workspace_min_.z(), workspace_max_.z());
     target_pose_.translation() = p;
 
+    if (move_ori_)
+    {
+        const double angle = filtered_ang_vel_cmd_.norm() * fr3_model_updater_.dt_;
+        if (angle > 1e-9)
+        {
+            const Eigen::Vector3d axis = filtered_ang_vel_cmd_.normalized();
+            const Eigen::Matrix3d dR = Eigen::AngleAxisd(angle, axis).toRotationMatrix();
+
+            // filtered_ang_vel_cmd_ is in base frame, so left-multiply.
+            target_rotation_ = dR * target_rotation_;
+
+            Eigen::Quaterniond q(target_rotation_);
+            q.normalize();
+            target_rotation_ = q.toRotationMatrix();
+        }
+    }
+
     target_pose_.linear() = target_rotation_;
     target_vel.head<3>() = filtered_lin_vel_cmd_;
+    if (move_ori_)
+    {
+        target_vel.tail<3>() = filtered_ang_vel_cmd_;
+    }
+
+    RCLCPP_DEBUG_THROTTLE(
+        node_->get_logger(),
+        *node_->get_clock(),
+        1000,
+        "[cartesian_executor] move_ori=%s linear_twist_frame=%s angular_twist_frame=%s raw_lin_input=[%.4f %.4f %.4f] raw_lin_base=[%.4f %.4f %.4f] raw_ang_input=[%.4f %.4f %.4f] raw_ang_base=[%.4f %.4f %.4f] filtered_ang_norm=%.4f",
+        move_ori_ ? "true" : "false",
+        linear_twist_frame_.c_str(),
+        angular_twist_frame_.c_str(),
+        raw_lin_cmd_input.x(),
+        raw_lin_cmd_input.y(),
+        raw_lin_cmd_input.z(),
+        raw_lin_cmd.x(),
+        raw_lin_cmd.y(),
+        raw_lin_cmd.z(),
+        raw_ang_cmd_input.x(),
+        raw_ang_cmd_input.y(),
+        raw_ang_cmd_input.z(),
+        raw_ang_cmd.x(),
+        raw_ang_cmd.y(),
+        raw_ang_cmd.z(),
+        filtered_ang_vel_cmd_.norm());
 
     ee_data[control_ee_name_].x_desired = target_pose_;
     ee_data[control_ee_name_].xdot_desired = target_vel;
@@ -442,6 +548,7 @@ void CartesianExecutor::onStop(StopReason reason)
     model_updater_.haltCommands();
 
     filtered_lin_vel_cmd_.setZero();
+    filtered_ang_vel_cmd_.setZero();
 
     if (!control_ee_name_.empty() && fr3_model_updater_.robot_data_->hasLinkFrame(control_ee_name_))
     {
@@ -453,6 +560,7 @@ void CartesianExecutor::onStop(StopReason reason)
     {
         std::lock_guard<std::mutex> lock(cmd_mutex_);
         latest_lin_vel_cmd_.setZero();
+        latest_ang_vel_cmd_.setZero();
         have_twist_cmd_ = false;
     }
 
@@ -510,6 +618,9 @@ void CartesianExecutor::subTwistCallback(const geometry_msgs::msg::TwistStamped:
     latest_lin_vel_cmd_.x() = msg->twist.linear.x;
     latest_lin_vel_cmd_.y() = msg->twist.linear.y;
     latest_lin_vel_cmd_.z() = msg->twist.linear.z;
+    latest_ang_vel_cmd_.x() = msg->twist.angular.x;
+    latest_ang_vel_cmd_.y() = msg->twist.angular.y;
+    latest_ang_vel_cmd_.z() = msg->twist.angular.z;
     latest_cmd_stamp_ = now;
     have_twist_cmd_ = true;
 

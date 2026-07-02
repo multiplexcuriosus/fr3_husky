@@ -71,6 +71,7 @@ private:
 
     std::mutex cmd_mutex_;
     Eigen::Vector3d latest_lin_vel_cmd_{Eigen::Vector3d::Zero()};
+    Eigen::Vector3d latest_ang_vel_cmd_{Eigen::Vector3d::Zero()};
     rclcpp::Time latest_cmd_stamp_{0, 0, RCL_ROS_TIME};
     bool have_twist_cmd_{false};
 
@@ -89,8 +90,11 @@ private:
 
     double vel_lpf_tau_{0.03};
     double cmd_timeout_sec_{0.20};
+    std::string linear_twist_frame_;
+    std::string angular_twist_frame_;
 
     Eigen::Vector3d filtered_lin_vel_cmd_{Eigen::Vector3d::Zero()};
+    Eigen::Vector3d filtered_ang_vel_cmd_{Eigen::Vector3d::Zero()};
     Eigen::Affine3d target_pose_{Eigen::Affine3d::Identity()};
     Eigen::Matrix3d target_rotation_{Eigen::Matrix3d::Identity()};
     Eigen::Vector3d workspace_min_;

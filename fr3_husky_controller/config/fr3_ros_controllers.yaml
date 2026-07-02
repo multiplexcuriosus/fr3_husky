@@ -52,6 +52,10 @@
 
   left_fr3_action_controller:
     ros__parameters:
+
+      cartesian_executor.linear_twist_frame: "base"
+      cartesian_executor.angular_twist_frame: "ee"
+
       update_rate: 1000  # Hz
       robot_name: ["left"]
       manipulator_joints:
