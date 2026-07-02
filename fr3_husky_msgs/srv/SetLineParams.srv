@@ -1,0 +1,8 @@
+float64 axis_x
+float64 axis_y
+float64 axis_z
+float64 half_length
+float64 safety_min_z
+---
+bool success
+string message

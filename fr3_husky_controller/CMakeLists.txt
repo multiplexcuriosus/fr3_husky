@@ -46,6 +46,7 @@ set(THIS_PACKAGE_INCLUDE_DEPENDS
     control_msgs
     controller_manager_msgs
     action_msgs
+    std_srvs
     moveit_ros_planning_interface
     srdfdom
 )
@@ -99,6 +100,7 @@ add_library(${PROJECT_NAME} SHARED
     src/servers/fr3/move_to_joint_action_server.cpp
     src/servers/fr3/vive_tracker_action_server.cpp
     src/servers/fr3/cartesian_executor_action_server.cpp
+    src/servers/fr3/trajectory_executor_action_server.cpp
 
 
     src/servers/fr3_husky/joint_trajectory_controller_action_server.cpp
@@ -156,6 +158,7 @@ ament_target_dependencies(${PROJECT_NAME} PUBLIC
     tf2_msgs
     controller_manager_msgs
     action_msgs
+    std_srvs
     moveit_ros_planning_interface
     srdfdom
 )

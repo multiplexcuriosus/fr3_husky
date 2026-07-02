@@ -36,6 +36,7 @@
   <depend>moveit_ros_planning_interface</depend>
   <depend>franka_msgs</depend>
   <depend>action_msgs</depend>
+  <depend>std_srvs</depend>
 
   <exec_depend>fr3_husky_description</exec_depend>
   <exec_depend>joy</exec_depend>

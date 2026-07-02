@@ -1,0 +1,5 @@
+string ee_name
+bool keep_current_orientation
+---
+bool success
+string message

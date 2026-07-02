@@ -1,0 +1,27 @@
+uint8 command
+uint8 CMD_GOTO_CENTER=1
+uint8 CMD_GOTO_START=2
+uint8 CMD_GOTO_END=3
+uint8 CMD_PHASE_TEST=4
+uint8 CMD_FAST_SWEEP=5
+
+string ee_name
+string profile_name
+
+float64 v_max
+float64 a_max
+float64 j_max
+float64 hold_before_sec
+float64 hold_after_sec
+uint32 repetitions
+---
+bool success
+string message
+uint8 final_state
+---
+string phase
+float64 progress
+float64 s_des
+float64 sdot_des
+float64 tracking_error_pos
+float64 tracking_error_z

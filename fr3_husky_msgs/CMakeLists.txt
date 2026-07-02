@@ -12,6 +12,10 @@ rosidl_generate_interfaces(${PROJECT_NAME}
     "action/MoveToJoint.action"
     "action/ViveTracker.action"
     "action/MobileMove.action"
+    "action/LineTrajectory.action"
+    "srv/CaptureLineCenter.srv"
+    "srv/SetLineCenter.srv"
+    "srv/SetLineParams.srv"
 )
 
 
