@@ -1,6 +1,7 @@
 #pragma once
 
 #include <fr3_husky_controller/servers/action_server_base.hpp>
+#include <fr3_husky_controller/servers/motion_gate.hpp>
 #include <fr3_husky_controller/model/fr3_model_updater.hpp>
 #include <fr3_husky_msgs/action/omega_haptic.hpp>
 
@@ -34,6 +35,14 @@ public:
         ABORTED
     };
 
+    enum class LastStopReason
+    {
+        NONE,
+        SUCCEEDED,
+        CANCELED,
+        ABORTED
+    };
+
     CartesianExecutor(const std::string& name, const NodePtr& node, ModelUpdaterBase& model_updater);
 
     bool acceptGoal(const ActionT::Goal& goal) override;
@@ -47,6 +56,7 @@ private:
     void publishStatus(bool log_status = false);
     std::string buildStatusMessage() const;
     std::string executorStateToString(ExecutorState state) const;
+    std::string lastStopReasonToString(LastStopReason reason) const;
     int64_t getLastCommandAgeMs(const rclcpp::Time& now) const;
 
     void updateComputeTimingDebug(std::chrono::steady_clock::time_point start_time);
@@ -62,6 +72,10 @@ private:
         std::shared_ptr<std_srvs::srv::Trigger::Response> response);
 
     FR3ModelUpdater& fr3_model_updater_;
+    std::shared_ptr<MotionGate> motion_gate_;
+    bool gate_acquired_{false};
+    bool start_failed_{false};
+    std::string start_failure_reason_;
 
     rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr twist_sub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_pub_;
@@ -90,6 +104,10 @@ private:
 
     double vel_lpf_tau_{0.03};
     double cmd_timeout_sec_{0.20};
+    bool only_x_axis_{false};
+    bool abort_on_repeated_qp_failure_{false};
+    int max_consecutive_qp_failures_{20};
+    int consecutive_qp_failures_{0};
     std::string linear_twist_frame_;
     std::string angular_twist_frame_;
 
@@ -109,6 +127,7 @@ private:
     ExecutorState executor_state_{ExecutorState::STOPPED};
     rclcpp::Time last_start_time_;
     rclcpp::Time last_stop_time_;
+    LastStopReason last_stop_reason_{LastStopReason::NONE};
     rclcpp::Time last_command_time_;
     rclcpp::Time last_status_publish_time_;
     bool stop_in_progress_{false};

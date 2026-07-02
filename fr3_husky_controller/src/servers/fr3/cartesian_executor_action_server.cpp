@@ -10,7 +10,6 @@
 #include <sstream>
 #include <stdexcept>
 #include <vector>
-#include <cmath>
 
 namespace fr3_husky_controller::servers::fr3
 {
@@ -32,6 +31,19 @@ double clamp(double x, double lo, double hi)
     return std::max(lo, std::min(hi, x));
 }
 
+template <typename T, typename NodeT>
+T declareOrGetParameter(
+    const std::shared_ptr<NodeT>& node,
+    const std::string& param_name,
+    const T& default_value)
+{
+    if (node->has_parameter(param_name))
+    {
+        return node->get_parameter(param_name).template get_value<T>();
+    }
+    return node->template declare_parameter<T>(param_name, default_value);
+}
+
 }  // namespace
 
 CartesianExecutor::CartesianExecutor(
@@ -39,7 +51,8 @@ CartesianExecutor::CartesianExecutor(
     const NodePtr& node,
     ModelUpdaterBase& model_updater)
 : Base(name, node, model_updater),
-  fr3_model_updater_(getFR3ModelUpdater(model_updater, name))
+    fr3_model_updater_(getFR3ModelUpdater(model_updater, name)),
+    motion_gate_(getGlobalMotionGate())
 {
     const auto clock_type = node_->get_clock()->get_clock_type();
     last_start_time_ = rclcpp::Time(0, 0, clock_type);
@@ -60,6 +73,16 @@ CartesianExecutor::CartesianExecutor(
         name_ + ".vel_lpf_tau", 0.03);
     cmd_timeout_sec_ = node_->declare_parameter<double>(
         name_ + ".cmd_timeout_sec", 0.20);
+    only_x_axis_ = declareOrGetParameter<bool>(
+        node_, name_ + ".only_x_axis", false);
+    abort_on_repeated_qp_failure_ = node_->declare_parameter<bool>(
+        name_ + ".abort_on_repeated_qp_failure", false);
+    max_consecutive_qp_failures_ = node_->declare_parameter<int>(
+        name_ + ".max_consecutive_qp_failures", 20);
+    if (max_consecutive_qp_failures_ < 1)
+    {
+        max_consecutive_qp_failures_ = 1;
+    }
     linear_twist_frame_ = node_->declare_parameter<std::string>(
         name_ + ".linear_twist_frame", "base");
     angular_twist_frame_ = node_->declare_parameter<std::string>(
@@ -192,6 +215,32 @@ void CartesianExecutor::onGoalAccepted(const ActionT::Goal& goal)
 
 void CartesianExecutor::onStart()
 {
+    std::string gate_reason;
+    if (!motion_gate_->tryAcquire(MotionGate::Owner::CARTESIAN_EXECUTOR, name_, &gate_reason))
+    {
+        start_failed_ = true;
+        start_failure_reason_ = gate_reason;
+        gate_acquired_ = false;
+
+        {
+            std::lock_guard<std::mutex> lock(status_mutex_);
+            executor_state_ = ExecutorState::STOPPED;
+            stop_in_progress_ = false;
+            last_stop_time_ = node_->now();
+            last_stop_reason_ = LastStopReason::ABORTED;
+        }
+
+        publishStatus(true);
+        RCLCPP_WARN(node_->get_logger(), "[%s] start rejected by motion gate: %s", name_.c_str(), gate_reason.c_str());
+        return;
+    }
+    else
+    {
+        start_failed_ = false;
+        start_failure_reason_.clear();
+        gate_acquired_ = true;
+    }
+
     {
         std::lock_guard<std::mutex> lock(cmd_mutex_);
         latest_lin_vel_cmd_.setZero();
@@ -209,7 +258,10 @@ void CartesianExecutor::onStart()
         executor_state_ = ExecutorState::ACTIVE;
         stop_in_progress_ = false;
         last_start_time_ = node_->now();
+        last_stop_reason_ = LastStopReason::NONE;
     }
+
+    consecutive_qp_failures_ = 0;
 
     ee_data.clear();
     ee_data[control_ee_name_] = drc::TaskSpaceData::Zero();
@@ -232,6 +284,12 @@ CartesianExecutor::ComputeResult CartesianExecutor::compute(
     const rclcpp::Time& time,
     const rclcpp::Duration& /*period*/)
 {
+    if (start_failed_)
+    {
+        RCLCPP_ERROR(node_->get_logger(), "[%s] aborting due to start failure: %s", name_.c_str(), start_failure_reason_.c_str());
+        return ComputeResult::ABORTED;
+    }
+
     const auto timing_start = std::chrono::steady_clock::now();
 
     bool should_publish_status = false;
@@ -342,8 +400,15 @@ CartesianExecutor::ComputeResult CartesianExecutor::compute(
 
     // Simple first-order low-pass filter.
     const double alpha = std::exp(-fr3_model_updater_.dt_ / vel_lpf_tau_);
-    filtered_lin_vel_cmd_ = alpha * filtered_lin_vel_cmd_ + (1.0 - alpha) * raw_lin_cmd;
+    filtered_lin_vel_cmd_ = alpha * filtered_lin_vel_cmd_ + (1.0 - alpha) * raw_lin_cmd*haptic_lin_vel_multiplier_;
     filtered_ang_vel_cmd_ = alpha * filtered_ang_vel_cmd_ + (1.0 - alpha) * raw_ang_cmd;
+
+
+    if (only_x_axis_)
+    {
+        filtered_lin_vel_cmd_(1) = 0.0;  // y
+        filtered_lin_vel_cmd_(2) = 0.0;  // z
+    }
 
     Eigen::Vector6d target_vel = Eigen::Vector6d::Zero();
 
@@ -355,6 +420,7 @@ CartesianExecutor::ComputeResult CartesianExecutor::compute(
     p.z() = clamp(p.z(), workspace_min_.z(), workspace_max_.z());
     target_pose_.translation() = p;
 
+    
     if (move_ori_)
     {
         const double angle = filtered_ang_vel_cmd_.norm() * fr3_model_updater_.dt_;
@@ -470,6 +536,33 @@ CartesianExecutor::ComputeResult CartesianExecutor::compute(
             break;
     }
 
+    if (control_mode_ == 2 || control_mode_ == 3)
+    {
+        if (is_qp_solved)
+        {
+            consecutive_qp_failures_ = 0;
+        }
+        else
+        {
+            consecutive_qp_failures_++;
+            if (abort_on_repeated_qp_failure_ &&
+                consecutive_qp_failures_ >= max_consecutive_qp_failures_)
+            {
+                RCLCPP_ERROR(
+                    node_->get_logger(),
+                    "[%s] aborting: repeated QP failures (%d >= %d)",
+                    name_.c_str(),
+                    consecutive_qp_failures_,
+                    max_consecutive_qp_failures_);
+                return ComputeResult::ABORTED;
+            }
+        }
+    }
+    else
+    {
+        consecutive_qp_failures_ = 0;
+    }
+
     fr3_model_updater_.writeCommand(
         fr3_model_updater_.torque_desired_total_ - fr3_model_updater_.g_total_);
 
@@ -565,17 +658,26 @@ void CartesianExecutor::onStop(StopReason reason)
     }
 
     const auto stop_time = node_->now();
-    ExecutorState final_state = ExecutorState::STOPPED;
-    if (reason == StopReason::ABORTED)
+    LastStopReason final_reason = LastStopReason::NONE;
+    if (reason == StopReason::SUCCEEDED)
     {
-        final_state = ExecutorState::ABORTED;
+        final_reason = LastStopReason::SUCCEEDED;
+    }
+    else if (reason == StopReason::CANCELED)
+    {
+        final_reason = LastStopReason::CANCELED;
+    }
+    else if (reason == StopReason::ABORTED)
+    {
+        final_reason = LastStopReason::ABORTED;
     }
 
     {
         std::lock_guard<std::mutex> lock(status_mutex_);
         last_stop_time_ = stop_time;
         stop_in_progress_ = false;
-        executor_state_ = final_state;
+        executor_state_ = ExecutorState::STOPPED;
+        last_stop_reason_ = final_reason;
     }
 
     const char* reason_str = "none";
@@ -583,21 +685,19 @@ void CartesianExecutor::onStop(StopReason reason)
     if (reason == StopReason::SUCCEEDED) reason_str = "succeeded";
     if (reason == StopReason::ABORTED)   reason_str = "aborted";
 
-    if (final_state == ExecutorState::ABORTED)
-    {
-        RCLCPP_INFO(
-            node_->get_logger(),
-            "[cartesian_executor] state ABORTED, last_stop_time=%s",
-            buildStatusMessage().c_str());
-    }
-    else
-    {
-        RCLCPP_INFO(
-            node_->get_logger(),
-            "[cartesian_executor] state STOPPED, last_stop_time=%.6f",
-            stop_time.seconds());
-    }
+    RCLCPP_INFO(
+        node_->get_logger(),
+        "[cartesian_executor] state STOPPED, last_stop_time=%.6f",
+        stop_time.seconds());
     publishStatus(true);
+
+    if (gate_acquired_)
+    {
+        motion_gate_->release(MotionGate::Owner::CARTESIAN_EXECUTOR);
+        gate_acquired_ = false;
+    }
+
+    consecutive_qp_failures_ = 0;
 
     RCLCPP_INFO(node_->get_logger(), "[%s] stopped (%s)", name_.c_str(), reason_str);
 }
@@ -653,7 +753,7 @@ void CartesianExecutor::handleGetStatus(
         state = executor_state_;
     }
 
-    response->success = (state == ExecutorState::STOPPED);
+    response->success = (state != ExecutorState::ACTIVE && state != ExecutorState::CANCELING);
     response->message = buildStatusMessage();
     RCLCPP_INFO(node_->get_logger(), "[cartesian_executor] status: %s", response->message.c_str());
 }
@@ -680,6 +780,7 @@ std::string CartesianExecutor::buildStatusMessage() const
     ExecutorState executor_state;
     rclcpp::Time last_start_time;
     rclcpp::Time last_stop_time;
+    LastStopReason last_stop_reason;
     bool stop_in_progress;
 
     {
@@ -687,6 +788,7 @@ std::string CartesianExecutor::buildStatusMessage() const
         executor_state = executor_state_;
         last_start_time = last_start_time_;
         last_stop_time = last_stop_time_;
+        last_stop_reason = last_stop_reason_;
         stop_in_progress = stop_in_progress_;
     }
 
@@ -696,6 +798,7 @@ std::string CartesianExecutor::buildStatusMessage() const
     std::ostringstream oss;
     oss << std::fixed << std::setprecision(6)
         << "state=" << executorStateToString(executor_state)
+        << " last_stop_reason=" << lastStopReasonToString(last_stop_reason)
         << " last_start_time=" << last_start_time.seconds()
         << " last_stop_time=" << last_stop_time.seconds()
         << " stop_in_progress=" << (stop_in_progress ? "true" : "false")
@@ -714,6 +817,23 @@ std::string CartesianExecutor::executorStateToString(ExecutorState state) const
         case ExecutorState::CANCELING:
             return "CANCELING";
         case ExecutorState::ABORTED:
+            return "ABORTED";
+        default:
+            return "UNKNOWN";
+    }
+}
+
+std::string CartesianExecutor::lastStopReasonToString(LastStopReason reason) const
+{
+    switch (reason)
+    {
+        case LastStopReason::NONE:
+            return "NONE";
+        case LastStopReason::SUCCEEDED:
+            return "SUCCEEDED";
+        case LastStopReason::CANCELED:
+            return "CANCELED";
+        case LastStopReason::ABORTED:
             return "ABORTED";
         default:
             return "UNKNOWN";

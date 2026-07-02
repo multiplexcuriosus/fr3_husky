@@ -19,6 +19,7 @@
 #include <fr3_husky_msgs/action/move_to_joint.hpp>
 
 #include <fr3_husky_controller/servers/action_server_base.hpp>
+#include <fr3_husky_controller/servers/motion_gate.hpp>
 #include <fr3_husky_controller/model/fr3_model_updater.hpp>
 
 namespace fr3_husky_controller::servers::fr3
@@ -86,6 +87,7 @@ private:
     bool isJointStateFresh(std::string* reason = nullptr) const;
     bool isMoveItCurrentStateFresh(std::string* reason = nullptr);
     bool isCartesianExecutorSafe(std::string* reason = nullptr);
+    bool isTrajectoryExecutorSafe(std::string* reason = nullptr);
     bool runPreflightSafetyChecks(std::string* reason = nullptr);
     bool runPostPlanSafetyChecks(std::string* reason = nullptr);
 
@@ -107,6 +109,9 @@ private:
     // ---- FollowJointTrajectory client → fr3_joint_trajectory_controller ------
     rclcpp_action::Client<FJT>::SharedPtr jtc_client_;
     rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr cartesian_status_client_;
+    rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr trajectory_status_client_;
+    std::shared_ptr<MotionGate> motion_gate_;
+    bool gate_acquired_{false};
 
     // ---- JTC busy detection (subscribe to its action status topic) -----------
     rclcpp::Subscription<action_msgs::msg::GoalStatusArray>::SharedPtr jtc_status_sub_;
@@ -147,6 +152,9 @@ private:
     bool require_cartesian_stopped_{true};
     std::string cartesian_get_status_service_{"/cartesian_executor/get_status"};
     int cartesian_settle_delay_ms_{1500};
+    bool require_trajectory_stopped_{true};
+    std::string trajectory_get_status_service_{"/trajectory_executor/get_status"};
+    int trajectory_settle_delay_ms_{1500};
     int wait_for_cartesian_status_timeout_ms_{300};
     bool reject_if_cartesian_status_unavailable_{true};
     std::string joint_state_topic_{"/right_fr3/joint_states"};

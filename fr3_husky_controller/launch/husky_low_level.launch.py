@@ -325,7 +325,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('robot_side',        default_value='right',  description="Robot side: left, right, or dual"),
         DeclareLaunchArgument('namespace',         default_value='',      description='Namespace for the robot'),
-        DeclareLaunchArgument('load_gripper',      default_value='true',  description='Load gripper (true/false)'),
+        DeclareLaunchArgument('load_gripper',      default_value='false',  description='Load gripper (true/false)'),
         DeclareLaunchArgument('load_mobile',       default_value='true', description='Load mobile base (true/false)'),
         DeclareLaunchArgument('use_mujoco',        default_value='false', description='Use MuJoCo hardware interface'),
         DeclareLaunchArgument('use_fake_hardware', default_value='false', description='Use fake hardware'),

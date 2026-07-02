@@ -55,6 +55,9 @@
 
       cartesian_executor.linear_twist_frame: "base"
       cartesian_executor.angular_twist_frame: "ee"
+      fr3_move_to_joint.require_trajectory_stopped: true
+      fr3_move_to_joint.trajectory_get_status_service: "/trajectory_executor/get_status"
+      fr3_move_to_joint.trajectory_settle_delay_ms: 1500
 
       update_rate: 1000  # Hz
       robot_name: ["left"]
@@ -101,6 +104,45 @@
   
   right_fr3_action_controller:
     ros__parameters:
+      fr3_move_to_joint.require_trajectory_stopped: true
+      fr3_move_to_joint.trajectory_get_status_service: "/trajectory_executor/get_status"
+      fr3_move_to_joint.trajectory_settle_delay_ms: 1500
+
+      cartesian_executor.only_x_axis: false
+
+      trajectory_executor.ee_name: "right_fr3_hand_tcp"
+      trajectory_executor.line_axis: [1.0, 0.0, 0.0]
+      trajectory_executor.line_half_length: 0.20
+      trajectory_executor.line_center_xyz: [0.50, 0.00, 0.20]
+      trajectory_executor.safety_min_z: 0.08
+      trajectory_executor.safety_margin_z: 0.005
+      trajectory_executor.hard_min_safety_z: 0.05
+      trajectory_executor.allow_service_update_safety_min_z: false
+
+      trajectory_executor.max_tracking_error_pos: 0.02
+      trajectory_executor.max_tracking_error_z: 0.005
+
+      trajectory_executor.default_v_max_slow: 0.10
+      trajectory_executor.default_a_max_slow: 0.30
+      trajectory_executor.default_j_max_slow: 10.0
+
+      trajectory_executor.default_v_max_fast: 0.40
+      trajectory_executor.default_a_max_fast: 1.00
+      trajectory_executor.default_j_max_fast: 30.0
+
+      trajectory_executor.hard_v_max: 0.50
+      trajectory_executor.hard_a_max: 1.00
+      trajectory_executor.hard_j_max: 30.0
+
+      trajectory_executor.min_line_half_length: 0.005
+      trajectory_executor.max_line_half_length: 0.40
+      trajectory_executor.reject_line_services_while_active: true
+
+      trajectory_executor.require_cartesian_stopped: true
+      trajectory_executor.require_cartesian_status_service_check: false
+      trajectory_executor.cartesian_get_status_service: "/cartesian_executor/get_status"
+      trajectory_executor.cartesian_settle_delay_ms: 1500
+
       update_rate: 1000  # Hz
       robot_name: ["right"]
       manipulator_joints:

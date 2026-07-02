@@ -4,9 +4,15 @@ uint8 CMD_GOTO_START=2
 uint8 CMD_GOTO_END=3
 uint8 CMD_PHASE_TEST=4
 uint8 CMD_FAST_SWEEP=5
+uint8 CMD_GOTO_S=6
 
 string ee_name
 string profile_name
+
+# Metric coordinate on the configured middle line.
+# s = 0.0 is line center, -half_length is start, +half_length is end.
+# Used by CMD_GOTO_S. Ignored by the legacy commands above.
+float64 target_s
 
 float64 v_max
 float64 a_max

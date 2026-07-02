@@ -63,7 +63,8 @@ std::optional<std::string> extractStatusField(const std::string& message, const 
 MoveToJoint::MoveToJoint(const std::string& name, const NodePtr& node,
                          ModelUpdaterBase& model_updater)
 : Base(name, node, model_updater),
-  fr3_model_updater_(getFR3ModelUpdater(model_updater, name))
+    fr3_model_updater_(getFR3ModelUpdater(model_updater, name)),
+    motion_gate_(getGlobalMotionGate())
 {
     const auto clock_type = node_->get_clock()->get_clock_type();
     last_joint_state_stamp_ = rclcpp::Time(0, 0, clock_type);
@@ -83,6 +84,47 @@ MoveToJoint::MoveToJoint(const std::string& name, const NodePtr& node,
         name_ + ".cartesian_get_status_service", "/cartesian_executor/get_status");
     cartesian_settle_delay_ms_ = node_->declare_parameter<int>(
         name_ + ".cartesian_settle_delay_ms", 1500);
+    const std::string require_trajectory_stopped_param =
+        name_ + ".require_trajectory_stopped";
+
+    if (node_->has_parameter(require_trajectory_stopped_param))
+    {
+        require_trajectory_stopped_ =
+            node_->get_parameter(require_trajectory_stopped_param).as_bool();
+    }
+    else
+    {
+        require_trajectory_stopped_ =
+            node_->declare_parameter<bool>(require_trajectory_stopped_param, true);
+    }
+
+    const std::string trajectory_get_status_service_param =
+        name_ + ".trajectory_get_status_service";
+    if (node_->has_parameter(trajectory_get_status_service_param))
+    {
+        trajectory_get_status_service_ =
+            node_->get_parameter(trajectory_get_status_service_param).as_string();
+    }
+    else
+    {
+        trajectory_get_status_service_ =
+            node_->declare_parameter<std::string>(
+                trajectory_get_status_service_param, "/trajectory_executor/get_status");
+    }
+
+    const std::string trajectory_settle_delay_ms_param =
+        name_ + ".trajectory_settle_delay_ms";
+    if (node_->has_parameter(trajectory_settle_delay_ms_param))
+    {
+        trajectory_settle_delay_ms_ =
+            node_->get_parameter(trajectory_settle_delay_ms_param).as_int();
+    }
+    else
+    {
+        trajectory_settle_delay_ms_ =
+            node_->declare_parameter<int>(trajectory_settle_delay_ms_param, 1500);
+    }
+
     wait_for_cartesian_status_timeout_ms_ = node_->declare_parameter<int>(
         name_ + ".wait_for_cartesian_status_timeout_ms", 300);
     reject_if_cartesian_status_unavailable_ = node_->declare_parameter<bool>(
@@ -105,6 +147,8 @@ MoveToJoint::MoveToJoint(const std::string& name, const NodePtr& node,
         node_, "fr3_joint_trajectory_controller");
     cartesian_status_client_ = node_->create_client<std_srvs::srv::Trigger>(
         cartesian_get_status_service_);
+    trajectory_status_client_ = node_->create_client<std_srvs::srv::Trigger>(
+        trajectory_get_status_service_);
 
     // --- Subscribe to JTC action status to detect busy state ---
     // If the JTC is already executing a trajectory (e.g. the user started
@@ -843,6 +887,126 @@ bool MoveToJoint::isCartesianExecutorSafe(std::string* reason)
     return true;
 }
 
+bool MoveToJoint::isTrajectoryExecutorSafe(std::string* reason)
+{
+    if (!require_trajectory_stopped_)
+    {
+        return true;
+    }
+
+    if (!trajectory_status_client_)
+    {
+        if (reason)
+        {
+            *reason = "trajectory executor status client not available";
+        }
+        return false;
+    }
+
+    const auto timeout = std::chrono::milliseconds(wait_for_cartesian_status_timeout_ms_);
+    if (!trajectory_status_client_->wait_for_service(timeout))
+    {
+        if (reason)
+        {
+            std::ostringstream oss;
+            oss << "trajectory executor status service unavailable after "
+                << wait_for_cartesian_status_timeout_ms_ << " ms";
+            *reason = oss.str();
+        }
+        return false;
+    }
+
+    auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
+    auto future = trajectory_status_client_->async_send_request(request);
+    if (future.wait_for(timeout) != std::future_status::ready)
+    {
+        if (reason)
+        {
+            std::ostringstream oss;
+            oss << "trajectory executor status request timed out after "
+                << wait_for_cartesian_status_timeout_ms_ << " ms";
+            *reason = oss.str();
+        }
+        return false;
+    }
+
+    std::shared_ptr<std_srvs::srv::Trigger::Response> response;
+    try
+    {
+        response = future.get();
+    }
+    catch (const std::exception& e)
+    {
+        if (reason)
+        {
+            *reason = std::string("trajectory executor status request failed: ") + e.what();
+        }
+        return false;
+    }
+
+    if (!response)
+    {
+        if (reason)
+        {
+            *reason = "trajectory executor status request returned no response";
+        }
+        return false;
+    }
+
+    const std::string& message = response->message;
+    const auto state = extractStatusField(message, "state");
+    const auto stop_in_progress = extractStatusField(message, "stop_in_progress");
+    const auto last_stop_time = extractStatusField(message, "last_stop_time");
+
+    if (!state || !stop_in_progress || !last_stop_time)
+    {
+        if (reason)
+        {
+            *reason = "trajectory executor status parse failure";
+        }
+        return false;
+    }
+
+    if (*state != "STOPPED" || *stop_in_progress == "true")
+    {
+        if (reason)
+        {
+            *reason = "trajectory executor not stopped";
+        }
+        return false;
+    }
+
+    double last_stop_seconds = 0.0;
+    try
+    {
+        last_stop_seconds = std::stod(*last_stop_time);
+    }
+    catch (const std::exception&)
+    {
+        if (reason)
+        {
+            *reason = "invalid trajectory last_stop_time";
+        }
+        return false;
+    }
+
+    const auto now_seconds = node_->now().seconds();
+    const double since_stop_ms = (now_seconds - last_stop_seconds) * 1000.0;
+    if (since_stop_ms < static_cast<double>(trajectory_settle_delay_ms_))
+    {
+        if (reason)
+        {
+            std::ostringstream oss;
+            oss << "trajectory executor stopped only " << static_cast<int64_t>(since_stop_ms)
+                << " ms ago";
+            *reason = oss.str();
+        }
+        return false;
+    }
+
+    return true;
+}
+
 bool MoveToJoint::runPreflightSafetyChecks(std::string* reason)
 {
     std::string local_reason;
@@ -866,6 +1030,15 @@ bool MoveToJoint::runPreflightSafetyChecks(std::string* reason)
     }
 
     if (!isCartesianExecutorSafe(&local_reason))
+    {
+        if (reason)
+        {
+            *reason = local_reason;
+        }
+        return false;
+    }
+
+    if (!isTrajectoryExecutorSafe(&local_reason))
     {
         if (reason)
         {
@@ -900,6 +1073,15 @@ bool MoveToJoint::runPostPlanSafetyChecks(std::string* reason)
     }
 
     if (!isCartesianExecutorSafe(&local_reason))
+    {
+        if (reason)
+        {
+            *reason = local_reason;
+        }
+        return false;
+    }
+
+    if (!isTrajectoryExecutorSafe(&local_reason))
     {
         if (reason)
         {
@@ -1035,6 +1217,20 @@ void MoveToJoint::onGoalAccepted(const ActionT::Goal& goal)
 
 void MoveToJoint::onStart()
 {
+    std::string gate_reason;
+    if (!motion_gate_->tryAcquire(MotionGate::Owner::MOVE_TO_JOINT, name_, &gate_reason))
+    {
+        result_error_code_ = ActionT::Result::ERROR_GOAL_REJECTED;
+        {
+            std::lock_guard<std::mutex> lk(msg_mutex_);
+            plan_error_msg_ = gate_reason;
+        }
+        plan_state_.store(PlanState::FAILED, std::memory_order_release);
+        RCLCPP_WARN(node_->get_logger(), "[%s] start rejected by motion gate: %s", name_.c_str(), gate_reason.c_str());
+        return;
+    }
+    gate_acquired_ = true;
+
     // Latch current joint positions; writeHoldCommands() uses these every
     // control cycle while planning is in progress.
     fr3_model_updater_.setInitFromCurrent();
@@ -1144,6 +1340,13 @@ void MoveToJoint::onStop(StopReason reason)
     const char* rs = (reason == StopReason::CANCELED)  ? "canceled"  :
                      (reason == StopReason::SUCCEEDED)  ? "succeeded" :
                      (reason == StopReason::ABORTED)    ? "aborted"   : "none";
+
+    if (gate_acquired_)
+    {
+        motion_gate_->release(MotionGate::Owner::MOVE_TO_JOINT);
+        gate_acquired_ = false;
+    }
+
     RCLCPP_INFO(node_->get_logger(), "[%s] stopped (%s)", name_.c_str(), rs);
 }
 
