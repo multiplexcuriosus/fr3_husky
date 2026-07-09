@@ -79,6 +79,7 @@ TrajectoryExecutor::TrajectoryExecutor(
     const auto clock_type = node_->get_clock()->get_clock_type();
     last_start_time_ = rclcpp::Time(0, 0, clock_type);
     last_stop_time_ = rclcpp::Time(0, 0, clock_type);
+    last_feedback_time_ = rclcpp::Time(0, 0, clock_type);
 
     ee_name_default_ = declareOrGetParameter<std::string>(
         node_, name_ + ".ee_name", "right_fr3_link8");
@@ -123,8 +124,8 @@ TrajectoryExecutor::TrajectoryExecutor(
     use_velocity_feedforward_ = declareOrGetParameter<bool>(
         node_, name_ + ".use_velocity_feedforward", true);
 
-    hard_v_max_ = declareOrGetParameter<double>(node_, name_ + ".hard_v_max", 0.50);
-    hard_a_max_ = declareOrGetParameter<double>(node_, name_ + ".hard_a_max", 1.00);
+    hard_v_max_ = declareOrGetParameter<double>(node_, name_ + ".hard_v_max", 1.9);
+    hard_a_max_ = declareOrGetParameter<double>(node_, name_ + ".hard_a_max", 5.0);
     hard_j_max_ = declareOrGetParameter<double>(node_, name_ + ".hard_j_max", 30.0);
     hard_min_safety_z_ = declareOrGetParameter<double>(node_, name_ + ".hard_min_safety_z", 0.05);
     min_line_half_length_ = declareOrGetParameter<double>(node_, name_ + ".min_line_half_length", 0.005);
@@ -177,7 +178,16 @@ TrajectoryExecutor::TrajectoryExecutor(
     }
 
     enable_compute_timing_debug_ = declareOrGetParameter<bool>(
-        node_, name_ + ".enable_compute_timing_debug", true);
+        node_, name_ + ".enable_compute_timing_debug", false);
+    feedback_period_sec_ = declareOrGetParameter<double>(
+        node_, name_ + ".feedback_period_sec", 0.02);
+    if (!std::isfinite(feedback_period_sec_) || feedback_period_sec_ <= 0.0)
+    {
+        RCLCPP_WARN(node_->get_logger(),
+                    "[%s] invalid feedback_period_sec=%.6f; using default 0.02",
+                    name_.c_str(), feedback_period_sec_);
+        feedback_period_sec_ = 0.02;
+    }
     timing_last_report_time_ = std::chrono::steady_clock::now();
 
     get_status_srv_ = node_->create_service<std_srvs::srv::Trigger>(
@@ -196,6 +206,11 @@ TrajectoryExecutor::TrajectoryExecutor(
         "/trajectory_executor/set_line_params",
         std::bind(&TrajectoryExecutor::handleSetLineParams, this, std::placeholders::_1, std::placeholders::_2));
 
+    refreshTrajectoryLimitParamsFromServer(false);
+    trajectory_limit_refresh_timer_ = node_->create_wall_timer(
+        std::chrono::milliseconds(500),
+        [this]() { refreshTrajectoryLimitParamsFromServer(true); });
+
     std::string geometry_reason;
     if (!validateLineGeometry(line_center_pose_.translation(), line_axis_, line_half_length_, &geometry_reason))
     {
@@ -212,6 +227,30 @@ TrajectoryExecutor::TrajectoryExecutor(
 
 bool TrajectoryExecutor::acceptGoal(const ActionT::Goal& goal)
 {
+    refreshTrajectoryLimitParamsFromServer(false);
+
+    double default_v_max_slow = 0.0;
+    double default_a_max_slow = 0.0;
+    double default_j_max_slow = 0.0;
+    double default_v_max_fast = 0.0;
+    double default_a_max_fast = 0.0;
+    double default_j_max_fast = 0.0;
+    double hard_v_max = 0.0;
+    double hard_a_max = 0.0;
+    double hard_j_max = 0.0;
+    {
+        std::lock_guard<std::mutex> lock(trajectory_limits_mutex_);
+        default_v_max_slow = default_v_max_slow_;
+        default_a_max_slow = default_a_max_slow_;
+        default_j_max_slow = default_j_max_slow_;
+        default_v_max_fast = default_v_max_fast_;
+        default_a_max_fast = default_a_max_fast_;
+        default_j_max_fast = default_j_max_fast_;
+        hard_v_max = hard_v_max_;
+        hard_a_max = hard_a_max_;
+        hard_j_max = hard_j_max_;
+    }
+
     if (!model_updater_.HasEffortCommandInterface())
     {
         RCLCPP_WARN(node_->get_logger(), "[%s] Reject: effort command interface required", name_.c_str());
@@ -233,13 +272,13 @@ bool TrajectoryExecutor::acceptGoal(const ActionT::Goal& goal)
 
     const double resolved_v_max =
         (goal.v_max > 0.0) ? goal.v_max :
-        ((goal.command == ActionT::Goal::CMD_FAST_SWEEP) ? default_v_max_fast_ : default_v_max_slow_);
+        ((goal.command == ActionT::Goal::CMD_FAST_SWEEP) ? default_v_max_fast : default_v_max_slow);
     const double resolved_a_max =
         (goal.a_max > 0.0) ? goal.a_max :
-        ((goal.command == ActionT::Goal::CMD_FAST_SWEEP) ? default_a_max_fast_ : default_a_max_slow_);
+        ((goal.command == ActionT::Goal::CMD_FAST_SWEEP) ? default_a_max_fast : default_a_max_slow);
     const double resolved_j_max =
         (goal.j_max > 0.0) ? goal.j_max :
-        ((goal.command == ActionT::Goal::CMD_FAST_SWEEP) ? default_j_max_fast_ : default_j_max_slow_);
+        ((goal.command == ActionT::Goal::CMD_FAST_SWEEP) ? default_j_max_fast : default_j_max_slow);
 
     if (!std::isfinite(resolved_v_max) || !std::isfinite(resolved_a_max) || !std::isfinite(resolved_j_max) ||
         resolved_v_max <= 0.0 || resolved_a_max <= 0.0 || resolved_j_max <= 0.0)
@@ -250,12 +289,12 @@ bool TrajectoryExecutor::acceptGoal(const ActionT::Goal& goal)
         return false;
     }
 
-    if (resolved_v_max > hard_v_max_ || resolved_a_max > hard_a_max_ || resolved_j_max > hard_j_max_)
+    if (resolved_v_max > hard_v_max || resolved_a_max > hard_a_max || resolved_j_max > hard_j_max)
     {
         RCLCPP_WARN(node_->get_logger(),
                     "[%s] Reject: limits exceed hard bounds v=%.6f a=%.6f j=%.6f hard=[%.6f %.6f %.6f]",
                     name_.c_str(), resolved_v_max, resolved_a_max, resolved_j_max,
-                    hard_v_max_, hard_a_max_, hard_j_max_);
+                    hard_v_max, hard_a_max, hard_j_max);
         return false;
     }
 
@@ -314,17 +353,33 @@ void TrajectoryExecutor::onGoalAccepted(const ActionT::Goal& goal)
         goal_.ee_name = ee_name_default_;
     }
 
+    double default_v_max_slow = 0.0;
+    double default_a_max_slow = 0.0;
+    double default_j_max_slow = 0.0;
+    double default_v_max_fast = 0.0;
+    double default_a_max_fast = 0.0;
+    double default_j_max_fast = 0.0;
+    {
+        std::lock_guard<std::mutex> lock(trajectory_limits_mutex_);
+        default_v_max_slow = default_v_max_slow_;
+        default_a_max_slow = default_a_max_slow_;
+        default_j_max_slow = default_j_max_slow_;
+        default_v_max_fast = default_v_max_fast_;
+        default_a_max_fast = default_a_max_fast_;
+        default_j_max_fast = default_j_max_fast_;
+    }
+
     if (goal_.v_max <= 0.0)
     {
-        goal_.v_max = (goal_.command == ActionT::Goal::CMD_FAST_SWEEP) ? default_v_max_fast_ : default_v_max_slow_;
+        goal_.v_max = (goal_.command == ActionT::Goal::CMD_FAST_SWEEP) ? default_v_max_fast : default_v_max_slow;
     }
     if (goal_.a_max <= 0.0)
     {
-        goal_.a_max = (goal_.command == ActionT::Goal::CMD_FAST_SWEEP) ? default_a_max_fast_ : default_a_max_slow_;
+        goal_.a_max = (goal_.command == ActionT::Goal::CMD_FAST_SWEEP) ? default_a_max_fast : default_a_max_slow;
     }
     if (goal_.j_max <= 0.0)
     {
-        goal_.j_max = (goal_.command == ActionT::Goal::CMD_FAST_SWEEP) ? default_j_max_fast_ : default_j_max_slow_;
+        goal_.j_max = (goal_.command == ActionT::Goal::CMD_FAST_SWEEP) ? default_j_max_fast : default_j_max_slow;
     }
     if (goal_.repetitions == 0)
     {
@@ -354,6 +409,15 @@ void TrajectoryExecutor::onStart()
         last_start_time_ = node_->now();
         last_stop_reason_ = LastStopReason::NONE;
     }
+
+    first_command_written_ = false;
+    last_feedback_time_ = node_->now();
+    timing_call_count_ = 0;
+    timing_overrun_800us_ = 0;
+    timing_overrun_1000us_ = 0;
+    timing_max_compute_us_ = 0.0;
+    timing_last_report_time_ = std::chrono::steady_clock::now();
+    resetMotionStats();
 
     if (start_failed_)
     {
@@ -475,8 +539,12 @@ TrajectoryExecutor::ComputeResult TrajectoryExecutor::compute(
     }
 
     last_phase_ = seg.phase;
+    last_s_des_ = s_des;
+    last_sdot_des_ = sdot_des;
 
-    if (!computeCartesianCommand(desired_pos, desired_vel))
+    const bool include_motion_stats = !seg.hold_only && seg.length > 1e-9;
+
+    if (!computeCartesianCommand(desired_pos, desired_vel, dt, include_motion_stats))
     {
         return ComputeResult::ABORTED;
     }
@@ -484,17 +552,18 @@ TrajectoryExecutor::ComputeResult TrajectoryExecutor::compute(
     overall_progress_ = (static_cast<double>(segment_index_) + seg_progress) /
                         std::max(1.0, static_cast<double>(segments_.size()));
 
-    last_s_des_ = s_des;
-    last_sdot_des_ = sdot_des;
-
-    auto fb = std::make_shared<ActionT::Feedback>();
-    fb->phase = seg.phase;
-    fb->progress = std::clamp(overall_progress_, 0.0, 1.0);
-    fb->s_des = s_des;
-    fb->sdot_des = sdot_des;
-    fb->tracking_error_pos = last_tracking_error_pos_;
-    fb->tracking_error_z = last_tracking_error_z_;
-    publishFeedback(fb);
+    if ((time - last_feedback_time_).seconds() >= feedback_period_sec_)
+    {
+        auto fb = std::make_shared<ActionT::Feedback>();
+        fb->phase = seg.phase;
+        fb->progress = std::clamp(overall_progress_, 0.0, 1.0);
+        fb->s_des = s_des;
+        fb->sdot_des = sdot_des;
+        fb->tracking_error_pos = last_tracking_error_pos_;
+        fb->tracking_error_z = last_tracking_error_z_;
+        publishFeedback(fb);
+        last_feedback_time_ = time;
+    }
 
     if (segment_time_ >= seg.t_total)
     {
@@ -509,7 +578,9 @@ TrajectoryExecutor::ComputeResult TrajectoryExecutor::compute(
 
 bool TrajectoryExecutor::computeCartesianCommand(
     const Eigen::Vector3d& desired_pos,
-    const Eigen::Vector3d& desired_vel)
+    const Eigen::Vector3d& desired_vel,
+    double dt,
+    bool include_motion_stats)
 {
     auto it = ee_data_.find(control_ee_name_);
     if (it == ee_data_.end())
@@ -525,6 +596,12 @@ bool TrajectoryExecutor::computeCartesianCommand(
     task.xddot.setZero();
 
     const Eigen::Vector3d current_pos = task.x.translation();
+    const Eigen::Vector3d current_vel = task.xdot.head<3>();
+    if (std::isfinite(dt) && dt > 0.0)
+    {
+        updateMotionStats(current_pos, current_vel, dt, include_motion_stats);
+    }
+
     const Eigen::Vector3d err = current_pos - desired_pos;
     const double tracking_error_pos = err.norm();
     const double tracking_error_z = std::abs(err.z());
@@ -586,15 +663,18 @@ bool TrajectoryExecutor::computeCartesianCommand(
     const Eigen::AngleAxisd aa(R_err);
     const double ori_err_deg = aa.angle() * 180.0 / 3.14159265358979323846;
 
-    RCLCPP_DEBUG_THROTTLE(
-        node_->get_logger(),
-        *node_->get_clock(),
-        200,
-        "[%s debug] mode=%d phase=%s cur=%s des=%s des-cur=%s ori_err_deg=%.3f v_ff=%s",
-        name_.c_str(), control_mode_, last_phase_.c_str(),
-        vecToString(current_pos).c_str(), vecToString(target_pose_.translation()).c_str(),
-        vecToString(target_pose_.translation() - current_pos).c_str(), ori_err_deg,
-        use_velocity_feedforward_ ? "true" : "false");
+    if (rcutils_logging_logger_is_enabled_for(node_->get_logger().get_name(), RCUTILS_LOG_SEVERITY_DEBUG))
+    {
+        RCLCPP_DEBUG_THROTTLE(
+            node_->get_logger(),
+            *node_->get_clock(),
+            200,
+            "[%s debug] mode=%d phase=%s cur=%s des=%s des-cur=%s ori_err_deg=%.3f v_ff=%s",
+            name_.c_str(), control_mode_, last_phase_.c_str(),
+            vecToString(current_pos).c_str(), vecToString(target_pose_.translation()).c_str(),
+            vecToString(target_pose_.translation() - current_pos).c_str(), ori_err_deg,
+            use_velocity_feedforward_ ? "true" : "false");
+    }
 
     bool is_qp_solved = true;
     std::string time_verbose;
@@ -715,6 +795,19 @@ bool TrajectoryExecutor::computeCartesianCommand(
     }
 
     // Deliberately identical to CartesianExecutor's command convention.
+    if (!first_command_written_)
+    {
+        RCLCPP_INFO(
+            node_->get_logger(),
+            "[%s] first command write t=%.6f phase=%s s_des=%.6f sdot_des=%.6f",
+            name_.c_str(),
+            node_->now().seconds(),
+            last_phase_.c_str(),
+            last_s_des_,
+            last_sdot_des_);
+        first_command_written_ = true;
+    }
+
     fr3_model_updater_.writeCommand(
         fr3_model_updater_.torque_desired_total_ - fr3_model_updater_.g_total_);
 
@@ -768,29 +861,41 @@ void TrajectoryExecutor::onStop(StopReason reason)
     }
 
     RCLCPP_INFO(node_->get_logger(),
-                "[%s] stopped reason=%s",
-                name_.c_str(), lastStopReasonToString(final_stop_reason).c_str());
+                "[%s] stopped reason=%s | %s",
+                name_.c_str(),
+                lastStopReasonToString(final_stop_reason).c_str(),
+                formatMotionStatsSummary().c_str());
 }
 
 TrajectoryExecutor::ResultPtr TrajectoryExecutor::makeResult(StopReason reason)
 {
     auto result = std::make_shared<ActionT::Result>();
+    const std::string stats_summary = formatMotionStatsSummary();
+    const bool has_motion_stats = motion_stats_.moving_time > 1e-9;
     if (reason == StopReason::SUCCEEDED)
     {
         result->success = true;
-        result->message = "trajectory completed";
+        result->message = "trajectory completed | " + stats_summary;
         result->final_state = 0;
     }
     else if (reason == StopReason::CANCELED)
     {
         result->success = false;
         result->message = "trajectory canceled";
+        if (has_motion_stats)
+        {
+            result->message += " | " + stats_summary;
+        }
         result->final_state = 2;
     }
     else
     {
         result->success = false;
-        result->message = last_error_message_.empty() ? "trajectory aborted" : last_error_message_;
+        result->message = last_error_message_.empty() ? "trajectory aborted" : "trajectory aborted: " + last_error_message_;
+        if (has_motion_stats)
+        {
+            result->message += " | " + stats_summary;
+        }
         result->final_state = 1;
     }
     return result;
@@ -819,6 +924,14 @@ bool TrajectoryExecutor::checkCartesianExecutorSafe(std::string* reason)
 
 bool TrajectoryExecutor::buildSegments(std::string* reason)
 {
+    double default_v_max_slow = 0.0;
+    double default_a_max_slow = 0.0;
+    {
+        std::lock_guard<std::mutex> lock(trajectory_limits_mutex_);
+        default_v_max_slow = default_v_max_slow_;
+        default_a_max_slow = default_a_max_slow_;
+    }
+
     const auto current_pose = fr3_model_updater_.robot_data_->getPose(control_ee_name_);
     const Eigen::Vector3d current = current_pose.translation();
 
@@ -890,7 +1003,7 @@ bool TrajectoryExecutor::buildSegments(std::string* reason)
 
         case ActionT::Goal::CMD_FAST_SWEEP:
         {
-            segments_.push_back(makeSegment("fast_setup_start", current, start, default_v_max_slow_, default_a_max_slow_));
+            segments_.push_back(makeSegment("fast_setup_start", current, start, default_v_max_slow, default_a_max_slow));
             if (goal_.hold_before_sec > 0.0) { segments_.push_back(makeHold("hold_before", start, goal_.hold_before_sec)); }
 
             Eigen::Vector3d from = start;
@@ -924,6 +1037,149 @@ bool TrajectoryExecutor::buildSegments(std::string* reason)
     }
 
     return true;
+}
+
+void TrajectoryExecutor::refreshTrajectoryLimitParamsFromServer(bool log_changes)
+{
+    double prev_default_v_max_slow = 0.0;
+    double prev_default_a_max_slow = 0.0;
+    double prev_default_j_max_slow = 0.0;
+    double prev_default_v_max_fast = 0.0;
+    double prev_default_a_max_fast = 0.0;
+    double prev_default_j_max_fast = 0.0;
+    double prev_hard_v_max = 0.0;
+    double prev_hard_a_max = 0.0;
+    double prev_hard_j_max = 0.0;
+
+    {
+        std::lock_guard<std::mutex> lock(trajectory_limits_mutex_);
+        prev_default_v_max_slow = default_v_max_slow_;
+        prev_default_a_max_slow = default_a_max_slow_;
+        prev_default_j_max_slow = default_j_max_slow_;
+        prev_default_v_max_fast = default_v_max_fast_;
+        prev_default_a_max_fast = default_a_max_fast_;
+        prev_default_j_max_fast = default_j_max_fast_;
+        prev_hard_v_max = hard_v_max_;
+        prev_hard_a_max = hard_a_max_;
+        prev_hard_j_max = hard_j_max_;
+    }
+
+    double next_default_v_max_slow = prev_default_v_max_slow;
+    double next_default_a_max_slow = prev_default_a_max_slow;
+    double next_default_j_max_slow = prev_default_j_max_slow;
+    double next_default_v_max_fast = prev_default_v_max_fast;
+    double next_default_a_max_fast = prev_default_a_max_fast;
+    double next_default_j_max_fast = prev_default_j_max_fast;
+    double next_hard_v_max = prev_hard_v_max;
+    double next_hard_a_max = prev_hard_a_max;
+    double next_hard_j_max = prev_hard_j_max;
+
+    (void)node_->get_parameter(name_ + ".hard_v_max", next_hard_v_max);
+    (void)node_->get_parameter(name_ + ".hard_a_max", next_hard_a_max);
+    (void)node_->get_parameter(name_ + ".hard_j_max", next_hard_j_max);
+    (void)node_->get_parameter(name_ + ".default_v_max_slow", next_default_v_max_slow);
+    (void)node_->get_parameter(name_ + ".default_a_max_slow", next_default_a_max_slow);
+    (void)node_->get_parameter(name_ + ".default_j_max_slow", next_default_j_max_slow);
+    (void)node_->get_parameter(name_ + ".default_v_max_fast", next_default_v_max_fast);
+    (void)node_->get_parameter(name_ + ".default_a_max_fast", next_default_a_max_fast);
+    (void)node_->get_parameter(name_ + ".default_j_max_fast", next_default_j_max_fast);
+
+    auto sanitize_positive = [&](double value, double fallback, const char* param_name) -> double
+    {
+        if (std::isfinite(value) && value > 0.0)
+        {
+            return value;
+        }
+        RCLCPP_WARN_THROTTLE(
+            node_->get_logger(),
+            *node_->get_clock(),
+            2000,
+            "[%s] invalid %s=%.6f; keeping previous %.6f",
+            name_.c_str(),
+            param_name,
+            value,
+            fallback);
+        return fallback;
+    };
+
+    next_hard_v_max = sanitize_positive(next_hard_v_max, prev_hard_v_max, "hard_v_max");
+    next_hard_a_max = sanitize_positive(next_hard_a_max, prev_hard_a_max, "hard_a_max");
+    next_hard_j_max = sanitize_positive(next_hard_j_max, prev_hard_j_max, "hard_j_max");
+
+    next_default_v_max_slow = sanitize_positive(next_default_v_max_slow, prev_default_v_max_slow, "default_v_max_slow");
+    next_default_a_max_slow = sanitize_positive(next_default_a_max_slow, prev_default_a_max_slow, "default_a_max_slow");
+    next_default_j_max_slow = sanitize_positive(next_default_j_max_slow, prev_default_j_max_slow, "default_j_max_slow");
+    next_default_v_max_fast = sanitize_positive(next_default_v_max_fast, prev_default_v_max_fast, "default_v_max_fast");
+    next_default_a_max_fast = sanitize_positive(next_default_a_max_fast, prev_default_a_max_fast, "default_a_max_fast");
+    next_default_j_max_fast = sanitize_positive(next_default_j_max_fast, prev_default_j_max_fast, "default_j_max_fast");
+
+    auto clamp_to_hard = [&](double value, double hard_limit, const char* param_name, const char* hard_name) -> double
+    {
+        if (value <= hard_limit)
+        {
+            return value;
+        }
+        RCLCPP_WARN_THROTTLE(
+            node_->get_logger(),
+            *node_->get_clock(),
+            2000,
+            "[%s] clamping %s=%.6f to %s=%.6f",
+            name_.c_str(),
+            param_name,
+            value,
+            hard_name,
+            hard_limit);
+        return hard_limit;
+    };
+
+    next_default_v_max_slow = clamp_to_hard(next_default_v_max_slow, next_hard_v_max, "default_v_max_slow", "hard_v_max");
+    next_default_a_max_slow = clamp_to_hard(next_default_a_max_slow, next_hard_a_max, "default_a_max_slow", "hard_a_max");
+    next_default_j_max_slow = clamp_to_hard(next_default_j_max_slow, next_hard_j_max, "default_j_max_slow", "hard_j_max");
+    next_default_v_max_fast = clamp_to_hard(next_default_v_max_fast, next_hard_v_max, "default_v_max_fast", "hard_v_max");
+    next_default_a_max_fast = clamp_to_hard(next_default_a_max_fast, next_hard_a_max, "default_a_max_fast", "hard_a_max");
+    next_default_j_max_fast = clamp_to_hard(next_default_j_max_fast, next_hard_j_max, "default_j_max_fast", "hard_j_max");
+
+    bool changed = false;
+    {
+        std::lock_guard<std::mutex> lock(trajectory_limits_mutex_);
+        changed =
+            default_v_max_slow_ != next_default_v_max_slow ||
+            default_a_max_slow_ != next_default_a_max_slow ||
+            default_j_max_slow_ != next_default_j_max_slow ||
+            default_v_max_fast_ != next_default_v_max_fast ||
+            default_a_max_fast_ != next_default_a_max_fast ||
+            default_j_max_fast_ != next_default_j_max_fast ||
+            hard_v_max_ != next_hard_v_max ||
+            hard_a_max_ != next_hard_a_max ||
+            hard_j_max_ != next_hard_j_max;
+
+        default_v_max_slow_ = next_default_v_max_slow;
+        default_a_max_slow_ = next_default_a_max_slow;
+        default_j_max_slow_ = next_default_j_max_slow;
+        default_v_max_fast_ = next_default_v_max_fast;
+        default_a_max_fast_ = next_default_a_max_fast;
+        default_j_max_fast_ = next_default_j_max_fast;
+        hard_v_max_ = next_hard_v_max;
+        hard_a_max_ = next_hard_a_max;
+        hard_j_max_ = next_hard_j_max;
+    }
+
+    if (log_changes && changed)
+    {
+        RCLCPP_INFO(
+            node_->get_logger(),
+            "[%s] refreshed limits slow[v=%.3f a=%.3f j=%.3f] fast[v=%.3f a=%.3f j=%.3f] hard[v=%.3f a=%.3f j=%.3f]",
+            name_.c_str(),
+            next_default_v_max_slow,
+            next_default_a_max_slow,
+            next_default_j_max_slow,
+            next_default_v_max_fast,
+            next_default_a_max_fast,
+            next_default_j_max_fast,
+            next_hard_v_max,
+            next_hard_a_max,
+            next_hard_j_max);
+    }
 }
 
 TrajectoryExecutor::TrajSegment TrajectoryExecutor::makeSegment(
@@ -1027,6 +1283,76 @@ double TrajectoryExecutor::commandTargetS(uint8_t command) const
     if (command == ActionT::Goal::CMD_GOTO_CENTER) { return 0.0; }
     if (command == ActionT::Goal::CMD_GOTO_S) { return goal_.target_s; }
     return 0.0;
+}
+
+void TrajectoryExecutor::resetMotionStats()
+{
+    motion_stats_ = MotionStats{};
+}
+
+void TrajectoryExecutor::updateMotionStats(
+    const Eigen::Vector3d& current_pos,
+    const Eigen::Vector3d& current_vel,
+    double dt,
+    bool include_sample)
+{
+    if (!finite3(current_pos) || !finite3(current_vel) || !std::isfinite(dt) || dt <= 0.0)
+    {
+        return;
+    }
+
+    if (!motion_stats_.initialized)
+    {
+        motion_stats_.last_pos = current_pos;
+        motion_stats_.last_vel = current_vel;
+        motion_stats_.initialized = true;
+        return;
+    }
+
+    if (!include_sample)
+    {
+        motion_stats_.last_pos = current_pos;
+        motion_stats_.last_vel = current_vel;
+        return;
+    }
+
+    const double speed = current_vel.norm();
+    const double ds = (current_pos - motion_stats_.last_pos).norm();
+    const Eigen::Vector3d acc_vec = (current_vel - motion_stats_.last_vel) / dt;
+    const double acc = acc_vec.norm();
+
+    motion_stats_.moving_time += dt;
+    motion_stats_.path_length += ds;
+    motion_stats_.speed_integral += speed * dt;
+    motion_stats_.acc_integral += acc * dt;
+    motion_stats_.peak_speed = std::max(motion_stats_.peak_speed, speed);
+    motion_stats_.peak_acc = std::max(motion_stats_.peak_acc, acc);
+    motion_stats_.speed_samples++;
+    motion_stats_.acc_samples++;
+
+    motion_stats_.last_pos = current_pos;
+    motion_stats_.last_vel = current_vel;
+}
+
+std::string TrajectoryExecutor::formatMotionStatsSummary() const
+{
+    if (motion_stats_.moving_time <= 1e-9)
+    {
+        return "motion_stats: no moving samples";
+    }
+
+    const double avg_speed = motion_stats_.speed_integral / motion_stats_.moving_time;
+    const double avg_acc = motion_stats_.acc_integral / motion_stats_.moving_time;
+
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(3)
+        << "motion_stats: moving_time=" << motion_stats_.moving_time << "s"
+        << " path=" << motion_stats_.path_length << "m"
+        << " avg_speed=" << avg_speed << "m/s"
+        << " peak_speed=" << motion_stats_.peak_speed << "m/s"
+        << " avg_acc=" << avg_acc << "m/s^2"
+        << " peak_acc=" << motion_stats_.peak_acc << "m/s^2";
+    return oss.str();
 }
 
 bool TrajectoryExecutor::geometryMutationBlocked() const

@@ -122,16 +122,16 @@
       trajectory_executor.max_tracking_error_pos: 0.02
       trajectory_executor.max_tracking_error_z: 0.005
 
-      trajectory_executor.default_v_max_slow: 0.10
-      trajectory_executor.default_a_max_slow: 0.30
+      trajectory_executor.default_v_max_slow: 0.5
+      trajectory_executor.default_a_max_slow: 0.5
       trajectory_executor.default_j_max_slow: 10.0
 
-      trajectory_executor.default_v_max_fast: 0.40
+      trajectory_executor.default_v_max_fast: 1.0
       trajectory_executor.default_a_max_fast: 1.00
       trajectory_executor.default_j_max_fast: 30.0
 
-      trajectory_executor.hard_v_max: 0.50
-      trajectory_executor.hard_a_max: 1.00
+      trajectory_executor.hard_v_max: 1.9
+      trajectory_executor.hard_a_max: 5.0
       trajectory_executor.hard_j_max: 30.0
 
       trajectory_executor.min_line_half_length: 0.005

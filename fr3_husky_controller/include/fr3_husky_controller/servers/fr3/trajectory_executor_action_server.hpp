@@ -75,6 +75,25 @@ private:
         bool hold_only{false};
     };
 
+    struct MotionStats
+    {
+        bool initialized{false};
+        Eigen::Vector3d last_pos{Eigen::Vector3d::Zero()};
+        Eigen::Vector3d last_vel{Eigen::Vector3d::Zero()};
+
+        double moving_time{0.0};
+        double path_length{0.0};
+
+        double speed_integral{0.0};
+        double acc_integral{0.0};
+
+        double peak_speed{0.0};
+        double peak_acc{0.0};
+
+        std::size_t speed_samples{0};
+        std::size_t acc_samples{0};
+    };
+
     bool checkCartesianExecutorSafe(std::string* reason);
     bool buildSegments(std::string* reason);
     TrajSegment makeSegment(
@@ -89,8 +108,20 @@ private:
     Eigen::Matrix3d resolveActiveOrientation(const Eigen::Affine3d& current_pose) const;
     Eigen::Vector3d linePoint(double s) const;
     double commandTargetS(uint8_t command) const;
+    void refreshTrajectoryLimitParamsFromServer(bool log_changes);
+    void resetMotionStats();
+    void updateMotionStats(
+        const Eigen::Vector3d& current_pos,
+        const Eigen::Vector3d& current_vel,
+        double dt,
+        bool include_sample);
+    std::string formatMotionStatsSummary() const;
 
-    bool computeCartesianCommand(const Eigen::Vector3d& desired_pos, const Eigen::Vector3d& desired_vel);
+    bool computeCartesianCommand(
+        const Eigen::Vector3d& desired_pos,
+        const Eigen::Vector3d& desired_vel,
+        double dt,
+        bool include_motion_stats);
     void updateComputeTimingDebug(std::chrono::steady_clock::time_point start_time);
 
     void handleGetStatus(
@@ -159,8 +190,8 @@ private:
     std::vector<double> base_orientation_rpy_deg_{0.0, 0.0, 0.0};
     bool use_velocity_feedforward_{false};
 
-    double hard_v_max_{0.50};
-    double hard_a_max_{1.00};
+    double hard_v_max_{1.9};
+    double hard_a_max_{5.0};
     double hard_j_max_{30.0};
     double hard_min_safety_z_{0.05};
     double min_line_half_length_{0.005};
@@ -193,6 +224,7 @@ private:
     std::size_t segment_index_{0};
     double segment_time_{0.0};
     double overall_progress_{0.0};
+    MotionStats motion_stats_;
 
     std::string last_error_message_;
     std::string last_phase_;
@@ -211,6 +243,7 @@ private:
     rclcpp::Service<fr3_husky_msgs::srv::CaptureLineCenter>::SharedPtr capture_center_srv_;
     rclcpp::Service<fr3_husky_msgs::srv::SetLineCenter>::SharedPtr set_center_srv_;
     rclcpp::Service<fr3_husky_msgs::srv::SetLineParams>::SharedPtr set_params_srv_;
+    rclcpp::TimerBase::SharedPtr trajectory_limit_refresh_timer_;
 
     mutable std::mutex status_mutex_;
     ExecutorState executor_state_{ExecutorState::STOPPED};
@@ -219,7 +252,13 @@ private:
     LastStopReason last_stop_reason_{LastStopReason::NONE};
     bool stop_in_progress_{false};
 
-    bool enable_compute_timing_debug_{true};
+    mutable std::mutex trajectory_limits_mutex_;
+
+    double feedback_period_sec_{0.02};
+    rclcpp::Time last_feedback_time_;
+    bool first_command_written_{false};
+
+    bool enable_compute_timing_debug_{false};
     uint64_t timing_call_count_{0};
     uint64_t timing_overrun_800us_{0};
     uint64_t timing_overrun_1000us_{0};
