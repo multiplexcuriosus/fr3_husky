@@ -16,6 +16,10 @@ rosidl_generate_interfaces(${PROJECT_NAME}
     "srv/CaptureLineCenter.srv"
     "srv/SetLineCenter.srv"
     "srv/SetLineParams.srv"
+    "srv/ProjectPointToLine.srv"
+    DEPENDENCIES
+    builtin_interfaces
+    geometry_msgs
 )
 
 

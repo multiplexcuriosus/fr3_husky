@@ -1,0 +1,23 @@
+geometry_msgs/PointStamped point
+
+# If > 0, reject points farther than this from the internal line.
+# If <= 0, skip cross-track rejection.
+float64 max_cross_track_error_m
+
+# Usually false. If false, reject projected s outside [-line_half_length, +line_half_length].
+bool allow_out_of_bounds
+
+---
+bool success
+string message
+
+# Coordinate along trajectory_executor's internal line.
+float64 s
+
+# Distance from requested point to projected point on line.
+float64 cross_track_error_m
+
+float64 line_half_length_m
+
+geometry_msgs/PointStamped projected_point
+geometry_msgs/PointStamped line_center

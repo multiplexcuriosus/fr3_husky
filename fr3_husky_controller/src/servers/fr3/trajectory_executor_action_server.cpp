@@ -66,6 +66,26 @@ std::string vecToString(const Eigen::Vector3d& v)
     return oss.str();
 }
 
+std::string cleanFrame(std::string frame)
+{
+    while (!frame.empty() && frame.front() == '/')
+    {
+        frame.erase(frame.begin());
+    }
+    while (!frame.empty() && frame.back() == '/')
+    {
+        frame.pop_back();
+    }
+    return frame;
+}
+
+bool sameFrame(const std::string& a, const std::string& b)
+{
+    const std::string aa = cleanFrame(a);
+    const std::string bb = cleanFrame(b);
+    return aa.empty() || bb.empty() || aa == bb;
+}
+
 }  // namespace
 
 TrajectoryExecutor::TrajectoryExecutor(
@@ -83,6 +103,17 @@ TrajectoryExecutor::TrajectoryExecutor(
 
     ee_name_default_ = declareOrGetParameter<std::string>(
         node_, name_ + ".ee_name", "right_fr3_link8");
+
+    line_frame_ = declareOrGetParameter<std::string>(
+        node_, name_ + ".line_frame", "base");
+    line_frame_ = cleanFrame(line_frame_);
+    if (line_frame_.empty())
+    {
+        RCLCPP_WARN(node_->get_logger(),
+                    "[%s] line_frame parameter empty; using 'base'",
+                    name_.c_str());
+        line_frame_ = "base";
+    }
 
     const auto axis = declareOrGetParameter<std::vector<double>>(
         node_, name_ + ".line_axis", std::vector<double>{1.0, 0.0, 0.0});
@@ -168,9 +199,9 @@ TrajectoryExecutor::TrajectoryExecutor(
     max_consecutive_qp_failures_ = std::max(1, max_consecutive_qp_failures_);
 
     const auto workspace_min_vec = declareOrGetParameter<std::vector<double>>(
-        node_, name_ + ".workspace_min", std::vector<double>{0.20, -0.45, 0.05});
+        node_, name_ + ".workspace_min", std::vector<double>{0.05, -0.4, 0.05});
     const auto workspace_max_vec = declareOrGetParameter<std::vector<double>>(
-        node_, name_ + ".workspace_max", std::vector<double>{0.75, 0.45, 0.65});
+        node_, name_ + ".workspace_max", std::vector<double>{0.95, 0.4, 0.65});
     if (workspace_min_vec.size() == 3 && workspace_max_vec.size() == 3)
     {
         workspace_min_ = Eigen::Vector3d(workspace_min_vec[0], workspace_min_vec[1], workspace_min_vec[2]);
@@ -206,6 +237,13 @@ TrajectoryExecutor::TrajectoryExecutor(
         "/trajectory_executor/set_line_params",
         std::bind(&TrajectoryExecutor::handleSetLineParams, this, std::placeholders::_1, std::placeholders::_2));
 
+    project_point_srv_ = node_->create_service<fr3_husky_msgs::srv::ProjectPointToLine>(
+        "/trajectory_executor/project_point_to_line",
+        std::bind(&TrajectoryExecutor::handleProjectPointToLine,
+                  this,
+                  std::placeholders::_1,
+                  std::placeholders::_2));
+
     refreshTrajectoryLimitParamsFromServer(false);
     trajectory_limit_refresh_timer_ = node_->create_wall_timer(
         std::chrono::milliseconds(500),
@@ -220,8 +258,8 @@ TrajectoryExecutor::TrajectoryExecutor(
     }
 
     RCLCPP_INFO(node_->get_logger(),
-                "[%s] TrajectoryExecutor created: ee_default=%s control_mode=%d orientation_mode=%s base_rpy=[%.1f %.1f %.1f]",
-                name_.c_str(), ee_name_default_.c_str(), control_mode_, target_orientation_mode_.c_str(),
+                "[%s] TrajectoryExecutor created: ee_default=%s line_frame=%s control_mode=%d orientation_mode=%s base_rpy=[%.1f %.1f %.1f]",
+                name_.c_str(), ee_name_default_.c_str(), line_frame_.c_str(), control_mode_, target_orientation_mode_.c_str(),
                 base_orientation_rpy_deg_[0], base_orientation_rpy_deg_[1], base_orientation_rpy_deg_[2]);
 }
 
@@ -976,19 +1014,40 @@ bool TrajectoryExecutor::buildSegments(std::string* reason)
 
         case ActionT::Goal::CMD_GOTO_S:
         {
-            if (!std::isfinite(goal_.target_s) || std::abs(goal_.target_s) > active_half_length_ + 1e-6)
+            if (!std::isfinite(goal_.target_s) ||
+                std::abs(goal_.target_s) > active_half_length_ + 1e-6)
             {
                 if (reason)
                 {
                     std::ostringstream oss;
-                    oss << "target_s=" << goal_.target_s << " outside active line half length=" << active_half_length_;
+                    oss << "target_s=" << goal_.target_s
+                        << " outside active line half length=" << active_half_length_;
                     *reason = oss.str();
                 }
                 return false;
             }
+
             const Eigen::Vector3d target = linePoint(goal_.target_s);
-            segments_.push_back(makeSegment("goto_s", current, target, goal_.v_max, goal_.a_max));
-            if (goal_.hold_after_sec > 0.0) { segments_.push_back(makeHold("hold_s", target, goal_.hold_after_sec)); }
+
+            RCLCPP_WARN(
+                node_->get_logger(),
+                "[%s GOTO_S DEBUG] current=%s target=%s delta=%s "
+                "center=%s axis=%s target_s=%.6f",
+                name_.c_str(),
+                vecToString(current).c_str(),
+                vecToString(target).c_str(),
+                vecToString(target - current).c_str(),
+                vecToString(active_center_).c_str(),
+                vecToString(active_axis_).c_str(),
+                goal_.target_s);
+
+            segments_.push_back(
+                makeSegment("goto_s", current, target, goal_.v_max, goal_.a_max));
+
+            if (goal_.hold_after_sec > 0.0)
+            {
+                segments_.push_back(makeHold("hold_s", target, goal_.hold_after_sec));
+            }
             break;
         }
 
@@ -1690,6 +1749,165 @@ void TrajectoryExecutor::handleSetLineParams(
 
     response->success = true;
     response->message = "set line params";
+}
+
+void TrajectoryExecutor::handleProjectPointToLine(
+    const std::shared_ptr<fr3_husky_msgs::srv::ProjectPointToLine::Request> request,
+    std::shared_ptr<fr3_husky_msgs::srv::ProjectPointToLine::Response> response)
+{
+    auto fail = [&](const std::string& message)
+    {
+        response->success = false;
+        response->message = message;
+        response->s = 0.0;
+        response->cross_track_error_m = 0.0;
+        response->line_half_length_m = 0.0;
+
+        const auto stamp = node_->now();
+
+        response->projected_point.header.stamp = stamp;
+        response->projected_point.header.frame_id = line_frame_;
+        response->projected_point.point.x = 0.0;
+        response->projected_point.point.y = 0.0;
+        response->projected_point.point.z = 0.0;
+
+        response->line_center.header.stamp = stamp;
+        response->line_center.header.frame_id = line_frame_;
+        response->line_center.point.x = 0.0;
+        response->line_center.point.y = 0.0;
+        response->line_center.point.z = 0.0;
+    };
+
+    {
+        std::lock_guard<std::mutex> lock(status_mutex_);
+        if (executor_state_ == ExecutorState::ACTIVE || stop_in_progress_)
+        {
+            fail("trajectory active/canceling; projection rejected to avoid racing active line snapshot");
+            return;
+        }
+    }
+
+    const std::string request_frame = cleanFrame(request->point.header.frame_id);
+    if (!sameFrame(request_frame, line_frame_))
+    {
+        std::ostringstream oss;
+        oss << "frame mismatch: request point frame_id='" << request_frame
+            << "', expected line_frame='" << line_frame_ << "'";
+        fail(oss.str());
+        return;
+    }
+
+    const Eigen::Vector3d p(
+        request->point.point.x,
+        request->point.point.y,
+        request->point.point.z);
+
+    if (!finite3(p))
+    {
+        fail("request point contains non-finite values");
+        return;
+    }
+
+    Eigen::Vector3d center;
+    Eigen::Vector3d axis;
+    double half_length = 0.0;
+
+    {
+        std::lock_guard<std::mutex> lock(line_mutex_);
+        center = line_center_pose_.translation();
+        axis = line_axis_;
+        half_length = std::clamp(line_half_length_, min_line_half_length_, max_line_half_length_);
+    }
+
+    if (!finite3(center) || !finite3(axis) || axis.norm() < 1e-9 || !std::isfinite(half_length))
+    {
+        fail("internal line geometry is invalid/non-finite");
+        return;
+    }
+
+    axis.normalize();
+
+    std::string geom_reason;
+    if (!validateLineGeometry(center, axis, half_length, &geom_reason))
+    {
+        fail("line geometry validation failed: " + geom_reason);
+        return;
+    }
+
+    const double s = axis.dot(p - center);
+    const Eigen::Vector3d projected = center + axis * s;
+    Eigen::Vector3d cross_track_delta = p - projected;
+
+    // The incoming interception point represents the ball location,
+    // while the configured line represents the TCP center. Their z
+    // coordinates are intentionally different, so validate only the
+    // horizontal alignment.
+    cross_track_delta.z() = 0.0;
+
+    const double cross_track_error = cross_track_delta.norm();
+
+    if (!request->allow_out_of_bounds && std::abs(s) > half_length + 1e-6)
+    {
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(6)
+            << "projected s=" << s
+            << " outside line bounds [-" << half_length << ", " << half_length << "]";
+        fail(oss.str());
+        return;
+    }
+
+    if (std::isfinite(request->max_cross_track_error_m) &&
+        request->max_cross_track_error_m > 0.0 &&
+        cross_track_error > request->max_cross_track_error_m)
+    {
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(6)
+            << "cross-track error=" << cross_track_error
+            << " exceeds max_cross_track_error_m=" << request->max_cross_track_error_m
+            << "; p=" << vecToString(p)
+            << " projected=" << vecToString(projected);
+        fail(oss.str());
+        return;
+    }
+
+    const auto stamp = node_->now();
+
+    response->success = true;
+
+    {
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(6)
+            << "projected point to line: s=" << s
+            << " cross_track_error=" << cross_track_error
+            << " half_length=" << half_length;
+        response->message = oss.str();
+    }
+
+    response->s = s;
+    response->cross_track_error_m = cross_track_error;
+    response->line_half_length_m = half_length;
+
+    response->projected_point.header.stamp = stamp;
+    response->projected_point.header.frame_id = line_frame_;
+    response->projected_point.point.x = projected.x();
+    response->projected_point.point.y = projected.y();
+    response->projected_point.point.z = projected.z();
+
+    response->line_center.header.stamp = stamp;
+    response->line_center.header.frame_id = line_frame_;
+    response->line_center.point.x = center.x();
+    response->line_center.point.y = center.y();
+    response->line_center.point.z = center.z();
+
+    RCLCPP_INFO(node_->get_logger(),
+                "[%s] projected point p=%s onto line center=%s axis=%s -> s=%.6f cross_track=%.6f half_length=%.6f",
+                name_.c_str(),
+                vecToString(p).c_str(),
+                vecToString(center).c_str(),
+                vecToString(axis).c_str(),
+                s,
+                cross_track_error,
+                half_length);
 }
 
 void TrajectoryExecutor::updateComputeTimingDebug(std::chrono::steady_clock::time_point start_time)

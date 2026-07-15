@@ -6,6 +6,7 @@
 
 #include <fr3_husky_msgs/action/line_trajectory.hpp>
 #include <fr3_husky_msgs/srv/capture_line_center.hpp>
+#include <fr3_husky_msgs/srv/project_point_to_line.hpp>
 #include <fr3_husky_msgs/srv/set_line_center.hpp>
 #include <fr3_husky_msgs/srv/set_line_params.hpp>
 
@@ -140,6 +141,10 @@ private:
         const std::shared_ptr<fr3_husky_msgs::srv::SetLineParams::Request> request,
         std::shared_ptr<fr3_husky_msgs::srv::SetLineParams::Response> response);
 
+    void handleProjectPointToLine(
+        const std::shared_ptr<fr3_husky_msgs::srv::ProjectPointToLine::Request> request,
+        std::shared_ptr<fr3_husky_msgs::srv::ProjectPointToLine::Response> response);
+
     bool geometryMutationBlocked() const;
     bool validateLineGeometry(
         const Eigen::Vector3d& center,
@@ -179,6 +184,7 @@ private:
     bool jerk_unused_logged_{false};
 
     std::string ee_name_default_;
+    std::string line_frame_;
     int control_mode_{0};
     std::string control_ee_name_;
 
@@ -243,6 +249,7 @@ private:
     rclcpp::Service<fr3_husky_msgs::srv::CaptureLineCenter>::SharedPtr capture_center_srv_;
     rclcpp::Service<fr3_husky_msgs::srv::SetLineCenter>::SharedPtr set_center_srv_;
     rclcpp::Service<fr3_husky_msgs::srv::SetLineParams>::SharedPtr set_params_srv_;
+    rclcpp::Service<fr3_husky_msgs::srv::ProjectPointToLine>::SharedPtr project_point_srv_;
     rclcpp::TimerBase::SharedPtr trajectory_limit_refresh_timer_;
 
     mutable std::mutex status_mutex_;
