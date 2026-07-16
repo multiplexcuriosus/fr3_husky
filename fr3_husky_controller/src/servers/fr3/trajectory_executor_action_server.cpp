@@ -244,6 +244,16 @@ TrajectoryExecutor::TrajectoryExecutor(
                   std::placeholders::_1,
                   std::placeholders::_2));
 
+    executed_goto_s_pub_ =
+        node_->create_publisher<std_msgs::msg::Float64>(
+            "/trajectory_executor/executed_goto_s",
+            rclcpp::QoS(10).reliable());
+
+    executed_goto_s_target_base_pub_ =
+        node_->create_publisher<geometry_msgs::msg::PointStamped>(
+            "/trajectory_executor/executed_goto_s_target_base",
+            rclcpp::QoS(10).reliable());
+
     refreshTrajectoryLimitParamsFromServer(false);
     trajectory_limit_refresh_timer_ = node_->create_wall_timer(
         std::chrono::milliseconds(500),
@@ -835,11 +845,34 @@ bool TrajectoryExecutor::computeCartesianCommand(
     // Deliberately identical to CartesianExecutor's command convention.
     if (!first_command_written_)
     {
+        if (goal_.command == ActionT::Goal::CMD_GOTO_S)
+        {
+            const Eigen::Vector3d executed_target =
+                active_center_ + active_axis_ * goal_.target_s;
+
+            geometry_msgs::msg::PointStamped target_msg;
+            target_msg.header.stamp = node_->now();
+            target_msg.header.frame_id = line_frame_;
+            target_msg.point.x = executed_target.x();
+            target_msg.point.y = executed_target.y();
+            target_msg.point.z = executed_target.z();
+            executed_goto_s_target_base_pub_->publish(target_msg);
+
+            std_msgs::msg::Float64 msg;
+            msg.data = goal_.target_s;
+            executed_goto_s_pub_->publish(msg);
+        }
+
         RCLCPP_INFO(
             node_->get_logger(),
-            "[%s] first command write t=%.6f phase=%s s_des=%.6f sdot_des=%.6f",
+            "[%s] first command write t=%.6f command=%s target_s=%.6f "
+            "target=%s frame=%s phase=%s s_des=%.6f sdot_des=%.6f",
             name_.c_str(),
             node_->now().seconds(),
+            commandToString(goal_.command).c_str(),
+            goal_.target_s,
+            vecToString(active_center_ + active_axis_ * goal_.target_s).c_str(),
+            line_frame_.c_str(),
             last_phase_.c_str(),
             last_s_des_,
             last_sdot_des_);

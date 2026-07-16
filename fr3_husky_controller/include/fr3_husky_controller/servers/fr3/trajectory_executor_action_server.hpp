@@ -11,6 +11,8 @@
 #include <fr3_husky_msgs/srv/set_line_params.hpp>
 
 #include <std_srvs/srv/trigger.hpp>
+#include <std_msgs/msg/float64.hpp>
+#include <geometry_msgs/msg/point_stamped.hpp>
 
 #include <Eigen/Geometry>
 #include <chrono>
@@ -251,6 +253,9 @@ private:
     rclcpp::Service<fr3_husky_msgs::srv::SetLineParams>::SharedPtr set_params_srv_;
     rclcpp::Service<fr3_husky_msgs::srv::ProjectPointToLine>::SharedPtr project_point_srv_;
     rclcpp::TimerBase::SharedPtr trajectory_limit_refresh_timer_;
+    rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr executed_goto_s_pub_;
+    rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr
+        executed_goto_s_target_base_pub_;
 
     mutable std::mutex status_mutex_;
     ExecutorState executor_state_{ExecutorState::STOPPED};
