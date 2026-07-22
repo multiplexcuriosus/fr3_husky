@@ -5,6 +5,7 @@
 #include <fr3_husky_controller/servers/motion_gate.hpp>
 
 #include <fr3_husky_msgs/action/line_trajectory.hpp>
+#include <fr3_husky_msgs/msg/middle_line.hpp>
 #include <fr3_husky_msgs/srv/capture_line_center.hpp>
 #include <fr3_husky_msgs/srv/project_point_to_line.hpp>
 #include <fr3_husky_msgs/srv/set_line_center.hpp>
@@ -153,6 +154,7 @@ private:
         const Eigen::Vector3d& axis,
         double half_length,
         std::string* reason) const;
+    void publishMiddleLineState();
     std::string commandToString(uint8_t command) const;
     std::string makeAbortDetail(
         const std::string& reason,
@@ -184,6 +186,9 @@ private:
 
     bool have_captured_orientation_{false};
     bool jerk_unused_logged_{false};
+
+    uint64_t middle_line_revision_{0};
+    std::string middle_line_ee_name_;
 
     std::string ee_name_default_;
     std::string line_frame_;
@@ -256,6 +261,7 @@ private:
     rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr executed_goto_s_pub_;
     rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr
         executed_goto_s_target_base_pub_;
+    rclcpp::Publisher<fr3_husky_msgs::msg::MiddleLine>::SharedPtr middle_line_state_pub_;
 
     mutable std::mutex status_mutex_;
     ExecutorState executor_state_{ExecutorState::STOPPED};

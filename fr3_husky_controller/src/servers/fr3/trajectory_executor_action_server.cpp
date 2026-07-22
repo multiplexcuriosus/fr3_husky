@@ -103,6 +103,7 @@ TrajectoryExecutor::TrajectoryExecutor(
 
     ee_name_default_ = declareOrGetParameter<std::string>(
         node_, name_ + ".ee_name", "right_fr3_link8");
+    middle_line_ee_name_ = ee_name_default_;
 
     line_frame_ = declareOrGetParameter<std::string>(
         node_, name_ + ".line_frame", "base");
@@ -253,6 +254,16 @@ TrajectoryExecutor::TrajectoryExecutor(
         node_->create_publisher<geometry_msgs::msg::PointStamped>(
             "/trajectory_executor/executed_goto_s_target_base",
             rclcpp::QoS(10).reliable());
+
+    const auto middle_line_qos =
+        rclcpp::QoS(rclcpp::KeepLast(1))
+            .reliable()
+            .transient_local();
+
+    middle_line_state_pub_ =
+        node_->create_publisher<fr3_husky_msgs::msg::MiddleLine>(
+            "/trajectory_executor/middle_line_state",
+            middle_line_qos);
 
     refreshTrajectoryLimitParamsFromServer(false);
     trajectory_limit_refresh_timer_ = node_->create_wall_timer(
@@ -1447,6 +1458,77 @@ std::string TrajectoryExecutor::formatMotionStatsSummary() const
     return oss.str();
 }
 
+void TrajectoryExecutor::publishMiddleLineState()
+{
+    Eigen::Vector3d center;
+    Eigen::Vector3d direction;
+    double half_length = 0.0;
+    uint64_t revision = 0;
+    std::string ee_name;
+    std::string frame_id;
+
+    {
+        std::lock_guard<std::mutex> lock(line_mutex_);
+        center = line_center_pose_.translation();
+        direction = line_axis_;
+        half_length = line_half_length_;
+        revision = middle_line_revision_;
+        ee_name = middle_line_ee_name_;
+        frame_id = line_frame_;
+    }
+
+    if (!finite3(center) ||
+        !finite3(direction) ||
+        direction.norm() < 1e-9 ||
+        !std::isfinite(half_length) ||
+        half_length <= 0.0)
+    {
+        RCLCPP_ERROR(
+            node_->get_logger(),
+            "[%s] refusing to publish invalid middle-line state",
+            name_.c_str());
+        return;
+    }
+
+    direction.normalize();
+
+    fr3_husky_msgs::msg::MiddleLine msg;
+    msg.header.stamp = node_->now();
+    msg.header.frame_id = frame_id;
+
+    msg.center.x = center.x();
+    msg.center.y = center.y();
+    msg.center.z = center.z();
+
+    msg.direction.x = direction.x();
+    msg.direction.y = direction.y();
+    msg.direction.z = direction.z();
+
+    msg.half_length = half_length;
+    msg.ee_name = ee_name;
+    msg.revision = revision;
+    msg.valid = true;
+
+    middle_line_state_pub_->publish(msg);
+
+    const Eigen::Vector3d start = center - half_length * direction;
+    const Eigen::Vector3d end = center + half_length * direction;
+
+    RCLCPP_INFO(
+        node_->get_logger(),
+        "[%s] published middle line revision=%" PRIu64
+        " frame=%s ee=%s center=%s direction=%s half_length=%.4f start=%s end=%s",
+        name_.c_str(),
+        revision,
+        frame_id.c_str(),
+        ee_name.c_str(),
+        vecToString(center).c_str(),
+        vecToString(direction).c_str(),
+        half_length,
+        vecToString(start).c_str(),
+        vecToString(end).c_str());
+}
+
 bool TrajectoryExecutor::geometryMutationBlocked() const
 {
     if (!reject_line_services_while_active_)
@@ -1647,7 +1729,11 @@ void TrajectoryExecutor::handleCaptureLineCenter(
         std::lock_guard<std::mutex> lock(line_mutex_);
         line_center_pose_ = new_center;
         have_captured_orientation_ = request->keep_current_orientation;
+        middle_line_ee_name_ = ee;
+        ++middle_line_revision_;
     }
+
+    publishMiddleLineState();
 
     response->success = true;
     response->message = "captured line center";
@@ -1667,9 +1753,10 @@ void TrajectoryExecutor::handleSetLineCenter(
     Eigen::Affine3d new_center = line_center_pose_;
     new_center.translation() = Eigen::Vector3d(request->x, request->y, request->z);
 
+    const std::string ee = request->ee_name.empty() ? ee_name_default_ : request->ee_name;
+
     if (request->use_current_orientation)
     {
-        const std::string ee = request->ee_name.empty() ? ee_name_default_ : request->ee_name;
         if (!fr3_model_updater_.robot_data_->hasLinkFrame(ee))
         {
             response->success = false;
@@ -1695,7 +1782,16 @@ void TrajectoryExecutor::handleSetLineCenter(
         std::lock_guard<std::mutex> lock(line_mutex_);
         line_center_pose_ = new_center;
         have_captured_orientation_ = request->use_current_orientation;
+
+        if (request->use_current_orientation)
+        {
+            middle_line_ee_name_ = ee;
+        }
+
+        ++middle_line_revision_;
     }
+
+    publishMiddleLineState();
 
     response->success = true;
     response->message = "set line center";
@@ -1778,7 +1874,10 @@ void TrajectoryExecutor::handleSetLineParams(
         line_axis_ = axis;
         line_half_length_ = half_length;
         safety_min_z_ = updated_safety_min_z;
+        ++middle_line_revision_;
     }
+
+    publishMiddleLineState();
 
     response->success = true;
     response->message = "set line params";
