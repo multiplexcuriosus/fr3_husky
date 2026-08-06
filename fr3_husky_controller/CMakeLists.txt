@@ -101,6 +101,7 @@ add_library(${PROJECT_NAME} SHARED
     src/servers/fr3/vive_tracker_action_server.cpp
     src/servers/fr3/cartesian_executor_action_server.cpp
     src/servers/fr3/trajectory_executor_action_server.cpp
+    src/servers/fr3/cont_tracker_action_server.cpp
 
 
     src/servers/fr3_husky/joint_trajectory_controller_action_server.cpp
@@ -187,4 +188,25 @@ install(DIRECTORY config launch rviz
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 ament_export_dependencies(${THIS_PACKAGE_INCLUDE_DEPENDS})
+
+if(BUILD_TESTING)
+    find_package(ament_cmake_gtest REQUIRED)
+
+    ament_add_gtest(test_acceleration_limited_scalar_generator
+        test/test_acceleration_limited_scalar_generator.cpp)
+
+    if(TARGET test_acceleration_limited_scalar_generator)
+        target_include_directories(test_acceleration_limited_scalar_generator PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    endif()
+
+    ament_add_gtest(test_trajectory_line_math
+        test/test_trajectory_line_math.cpp)
+
+    if(TARGET test_trajectory_line_math)
+        target_include_directories(test_trajectory_line_math PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    endif()
+endif()
+
 ament_package()

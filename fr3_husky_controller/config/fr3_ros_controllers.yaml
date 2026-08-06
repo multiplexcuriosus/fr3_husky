@@ -137,6 +137,32 @@
       trajectory_executor.min_line_half_length: 0.005
       trajectory_executor.max_line_half_length: 0.40
       trajectory_executor.reject_line_services_while_active: true
+      trajectory_executor.publish_current_tcp_s: true
+      trajectory_executor.current_tcp_s_publish_rate_hz: 30.0
+
+      cont_tracker.ee_name: "right_fr3_hand_tcp"
+      cont_tracker.default_v_max: 0.40
+      cont_tracker.default_a_max: 1.00
+      cont_tracker.target_timeout_sec: 0.25
+      cont_tracker.max_session_sec: 5.0
+      cont_tracker.terminal_brake_timeout_sec: 1.0
+      cont_tracker.target_deadband_m: 0.002
+      cont_tracker.holding_velocity_mps: 0.005
+      cont_tracker.max_start_cross_track_m: 0.015
+      cont_tracker.stale_target_behavior: "hold_last"
+      cont_tracker.abort_on_stale_target: false
+
+      cont_tracker.safety_min_z: 0.02
+      cont_tracker.safety_margin_z: 0.005
+      cont_tracker.hard_min_safety_z: 0.02
+      cont_tracker.max_tracking_error_pos: 0.02
+      cont_tracker.max_tracking_error_z: 0.007
+      cont_tracker.hard_v_max: 1.9
+      cont_tracker.hard_a_max: 5.0
+      cont_tracker.min_line_half_length: 0.005
+      cont_tracker.max_line_half_length: 0.40
+      cont_tracker.workspace_min: [0.05, -0.4, 0.05]
+      cont_tracker.workspace_max: [0.95, 0.4, 0.65]
 
       trajectory_executor.require_cartesian_stopped: true
       trajectory_executor.require_cartesian_status_service_check: false

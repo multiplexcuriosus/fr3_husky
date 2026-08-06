@@ -31,6 +31,7 @@ class TrajectoryExecutor final : public ActionServerBase<fr3_husky_msgs::action:
 public:
     using ActionT = fr3_husky_msgs::action::LineTrajectory;
     using Base = ActionServerBase<ActionT>;
+    using NodePtr = typename Base::NodePtr;
     using ComputeResult = typename Base::ComputeResult;
     using StopReason = typename Base::StopReason;
     using ResultPtr = typename Base::ResultPtr;
@@ -154,7 +155,12 @@ private:
         const Eigen::Vector3d& axis,
         double half_length,
         std::string* reason) const;
+    bool canonicalizeLineAxis(
+        const Eigen::Vector3d& input_axis,
+        Eigen::Vector3d* canonical_axis,
+        bool* was_flipped) const;
     void publishMiddleLineState();
+    void publishCurrentTcpS();
     std::string commandToString(uint8_t command) const;
     std::string makeAbortDetail(
         const std::string& reason,
@@ -178,6 +184,7 @@ private:
     Eigen::Affine3d line_center_pose_{Eigen::Affine3d::Identity()};
     Eigen::Vector3d line_axis_{Eigen::Vector3d::UnitX()};
     double line_half_length_{0.20};
+    bool line_valid_{false};
 
     Eigen::Vector3d active_center_{Eigen::Vector3d::Zero()};
     Eigen::Vector3d active_axis_{Eigen::Vector3d::UnitX()};
@@ -262,6 +269,10 @@ private:
     rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr
         executed_goto_s_target_base_pub_;
     rclcpp::Publisher<fr3_husky_msgs::msg::MiddleLine>::SharedPtr middle_line_state_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr current_tcp_s_pub_;
+    rclcpp::TimerBase::SharedPtr current_tcp_s_timer_;
+    bool publish_current_tcp_s_{true};
+    double current_tcp_s_publish_rate_hz_{30.0};
 
     mutable std::mutex status_mutex_;
     ExecutorState executor_state_{ExecutorState::STOPPED};

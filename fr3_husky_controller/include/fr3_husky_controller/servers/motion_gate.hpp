@@ -17,6 +17,7 @@ public:
         NONE = 0,
         CARTESIAN_EXECUTOR,
         TRAJECTORY_EXECUTOR,
+        CONT_TRACKER,
         MOVE_TO_JOINT,
     };
 
@@ -88,6 +89,7 @@ public:
             case Owner::NONE: return "NONE";
             case Owner::CARTESIAN_EXECUTOR: return "CARTESIAN_EXECUTOR";
             case Owner::TRAJECTORY_EXECUTOR: return "TRAJECTORY_EXECUTOR";
+            case Owner::CONT_TRACKER: return "CONT_TRACKER";
             case Owner::MOVE_TO_JOINT: return "MOVE_TO_JOINT";
             default: return "UNKNOWN";
         }

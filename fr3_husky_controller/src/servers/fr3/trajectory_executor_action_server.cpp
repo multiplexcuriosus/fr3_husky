@@ -1,4 +1,5 @@
 #include <fr3_husky_controller/servers/fr3/trajectory_executor_action_server.hpp>
+#include <fr3_husky_controller/servers/fr3/trajectory_line_math.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -38,11 +39,6 @@ T declareOrGetParameter(
 double clamp(double x, double lo, double hi)
 {
     return std::max(lo, std::min(hi, x));
-}
-
-bool finite3(const Eigen::Vector3d& v)
-{
-    return std::isfinite(v.x()) && std::isfinite(v.y()) && std::isfinite(v.z());
 }
 
 Eigen::Matrix3d rpyDegToRot(double roll_deg, double pitch_deg, double yaw_deg)
@@ -122,11 +118,27 @@ TrajectoryExecutor::TrajectoryExecutor(
     {
         line_axis_ = Eigen::Vector3d(axis[0], axis[1], axis[2]);
     }
-    if (!finite3(line_axis_) || line_axis_.norm() < 1e-9)
+    bool initial_axis_valid = true;
+    bool axis_flipped = false;
+    Eigen::Vector3d canonical_axis = line_axis_;
+    if (!canonicalizeLineAxis(line_axis_, &canonical_axis, &axis_flipped))
     {
+        initial_axis_valid = false;
+        RCLCPP_WARN(node_->get_logger(),
+                    "[%s] invalid initial line_axis parameter; middle line marked invalid until updated",
+                    name_.c_str());
         line_axis_ = Eigen::Vector3d::UnitX();
     }
-    line_axis_.normalize();
+    else
+    {
+        line_axis_ = canonical_axis;
+        if (axis_flipped)
+        {
+            RCLCPP_INFO(node_->get_logger(),
+                        "[%s] canonicalized initial line_axis to point toward base +x",
+                        name_.c_str());
+        }
+    }
 
     line_half_length_ = declareOrGetParameter<double>(
         node_, name_ + ".line_half_length", 0.20);
@@ -220,6 +232,19 @@ TrajectoryExecutor::TrajectoryExecutor(
                     name_.c_str(), feedback_period_sec_);
         feedback_period_sec_ = 0.02;
     }
+
+    publish_current_tcp_s_ = declareOrGetParameter<bool>(
+        node_, name_ + ".publish_current_tcp_s", true);
+    current_tcp_s_publish_rate_hz_ = declareOrGetParameter<double>(
+        node_, name_ + ".current_tcp_s_publish_rate_hz", 30.0);
+    if (!std::isfinite(current_tcp_s_publish_rate_hz_) || current_tcp_s_publish_rate_hz_ <= 0.0)
+    {
+        RCLCPP_WARN(node_->get_logger(),
+                    "[%s] invalid current_tcp_s_publish_rate_hz=%.6f; using default 30.0 Hz",
+                    name_.c_str(), current_tcp_s_publish_rate_hz_);
+        current_tcp_s_publish_rate_hz_ = 30.0;
+    }
+
     timing_last_report_time_ = std::chrono::steady_clock::now();
 
     get_status_srv_ = node_->create_service<std_srvs::srv::Trigger>(
@@ -265,17 +290,37 @@ TrajectoryExecutor::TrajectoryExecutor(
             "/trajectory_executor/middle_line_state",
             middle_line_qos);
 
+    if (publish_current_tcp_s_)
+    {
+        current_tcp_s_pub_ =
+            node_->create_publisher<std_msgs::msg::Float64>(
+                "/middle_line/current_tcp_s",
+                rclcpp::QoS(rclcpp::KeepLast(10)).best_effort());
+
+        const auto period_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::duration<double>(1.0 / current_tcp_s_publish_rate_hz_));
+        current_tcp_s_timer_ = node_->create_wall_timer(
+            period_ns,
+            std::bind(&TrajectoryExecutor::publishCurrentTcpS, this));
+    }
+
     refreshTrajectoryLimitParamsFromServer(false);
     trajectory_limit_refresh_timer_ = node_->create_wall_timer(
         std::chrono::milliseconds(500),
         [this]() { refreshTrajectoryLimitParamsFromServer(true); });
 
     std::string geometry_reason;
-    if (!validateLineGeometry(line_center_pose_.translation(), line_axis_, line_half_length_, &geometry_reason))
+    line_valid_ = initial_axis_valid &&
+                  validateLineGeometry(line_center_pose_.translation(), line_axis_, line_half_length_, &geometry_reason);
+    if (!line_valid_)
     {
         RCLCPP_WARN(node_->get_logger(),
                     "[%s] initial line geometry needs attention: %s",
                     name_.c_str(), geometry_reason.c_str());
+    }
+    else
+    {
+        publishMiddleLineState();
     }
 
     RCLCPP_INFO(node_->get_logger(),
@@ -1019,6 +1064,11 @@ bool TrajectoryExecutor::buildSegments(std::string* reason)
 
     {
         std::lock_guard<std::mutex> lock(line_mutex_);
+        if (!line_valid_)
+        {
+            if (reason) { *reason = "middle line is not valid"; }
+            return false;
+        }
         active_center_ = line_center_pose_.translation();
         active_axis_ = line_axis_;
         active_half_length_ = std::clamp(line_half_length_, min_line_half_length_, max_line_half_length_);
@@ -1458,6 +1508,14 @@ std::string TrajectoryExecutor::formatMotionStatsSummary() const
     return oss.str();
 }
 
+bool TrajectoryExecutor::canonicalizeLineAxis(
+    const Eigen::Vector3d& input_axis,
+    Eigen::Vector3d* canonical_axis,
+    bool* was_flipped) const
+{
+    return canonicalizeAxisToBaseX(input_axis, canonical_axis, was_flipped, 1e-9, 1e-6);
+}
+
 void TrajectoryExecutor::publishMiddleLineState()
 {
     Eigen::Vector3d center;
@@ -1466,6 +1524,7 @@ void TrajectoryExecutor::publishMiddleLineState()
     uint64_t revision = 0;
     std::string ee_name;
     std::string frame_id;
+    bool line_valid = false;
 
     {
         std::lock_guard<std::mutex> lock(line_mutex_);
@@ -1475,6 +1534,7 @@ void TrajectoryExecutor::publishMiddleLineState()
         revision = middle_line_revision_;
         ee_name = middle_line_ee_name_;
         frame_id = line_frame_;
+        line_valid = line_valid_;
     }
 
     if (!finite3(center) ||
@@ -1483,9 +1543,9 @@ void TrajectoryExecutor::publishMiddleLineState()
         !std::isfinite(half_length) ||
         half_length <= 0.0)
     {
-        RCLCPP_ERROR(
+        RCLCPP_WARN(
             node_->get_logger(),
-            "[%s] refusing to publish invalid middle-line state",
+            "[%s] refusing to publish malformed middle-line state payload",
             name_.c_str());
         return;
     }
@@ -1507,7 +1567,7 @@ void TrajectoryExecutor::publishMiddleLineState()
     msg.half_length = half_length;
     msg.ee_name = ee_name;
     msg.revision = revision;
-    msg.valid = true;
+    msg.valid = line_valid;
 
     middle_line_state_pub_->publish(msg);
 
@@ -1517,7 +1577,7 @@ void TrajectoryExecutor::publishMiddleLineState()
     RCLCPP_INFO(
         node_->get_logger(),
         "[%s] published middle line revision=%" PRIu64
-        " frame=%s ee=%s center=%s direction=%s half_length=%.4f start=%s end=%s",
+        " frame=%s ee=%s center=%s direction=%s half_length=%.4f valid=%s start=%s end=%s",
         name_.c_str(),
         revision,
         frame_id.c_str(),
@@ -1525,8 +1585,140 @@ void TrajectoryExecutor::publishMiddleLineState()
         vecToString(center).c_str(),
         vecToString(direction).c_str(),
         half_length,
+        line_valid ? "true" : "false",
         vecToString(start).c_str(),
         vecToString(end).c_str());
+}
+
+void TrajectoryExecutor::publishCurrentTcpS()
+{
+    Eigen::Vector3d center = Eigen::Vector3d::Zero();
+    Eigen::Vector3d axis = Eigen::Vector3d::Zero();
+    double half_length = 0.0;
+    bool line_valid = false;
+    std::string ee_name;
+    std::string line_frame;
+
+    {
+        std::lock_guard<std::mutex> lock(line_mutex_);
+        center = line_center_pose_.translation();
+        axis = line_axis_;
+        half_length = line_half_length_;
+        line_valid = line_valid_;
+        ee_name = middle_line_ee_name_;
+        line_frame = line_frame_;
+    }
+
+    if (!line_valid)
+    {
+        RCLCPP_WARN_THROTTLE(
+            node_->get_logger(),
+            *node_->get_clock(),
+            2000,
+            "[%s] current_tcp_s publish skipped: line geometry not valid",
+            name_.c_str());
+        return;
+    }
+
+    if (!sameFrame(line_frame, "base"))
+    {
+        RCLCPP_ERROR_THROTTLE(
+            node_->get_logger(),
+            *node_->get_clock(),
+            2000,
+            "[%s] current_tcp_s publish skipped: line_frame '%s' does not match expected robot-base frame 'base'",
+            name_.c_str(),
+            line_frame.c_str());
+        return;
+    }
+
+    if (!finite3(center) || !finite3(axis))
+    {
+        RCLCPP_WARN_THROTTLE(
+            node_->get_logger(),
+            *node_->get_clock(),
+            2000,
+            "[%s] current_tcp_s publish skipped: non-finite center or axis",
+            name_.c_str());
+        return;
+    }
+
+    const double axis_norm = axis.norm();
+    if (!std::isfinite(axis_norm) || axis_norm < 1e-9)
+    {
+        RCLCPP_WARN_THROTTLE(
+            node_->get_logger(),
+            *node_->get_clock(),
+            2000,
+            "[%s] current_tcp_s publish skipped: axis norm too small",
+            name_.c_str());
+        return;
+    }
+    axis /= axis_norm;
+
+    if (ee_name.empty())
+    {
+        RCLCPP_WARN_THROTTLE(
+            node_->get_logger(),
+            *node_->get_clock(),
+            2000,
+            "[%s] current_tcp_s publish skipped: middle_line_ee_name is empty",
+            name_.c_str());
+        return;
+    }
+
+    if (!fr3_model_updater_.robot_data_->hasLinkFrame(ee_name))
+    {
+        RCLCPP_WARN_THROTTLE(
+            node_->get_logger(),
+            *node_->get_clock(),
+            2000,
+            "[%s] current_tcp_s publish skipped: ee '%s' not found in robot model",
+            name_.c_str(),
+            ee_name.c_str());
+        return;
+    }
+
+    const Eigen::Affine3d tcp_pose = fr3_model_updater_.robot_data_->getPose(ee_name);
+    const Eigen::Vector3d tcp_position = tcp_pose.translation();
+    if (!finite3(tcp_position))
+    {
+        RCLCPP_WARN_THROTTLE(
+            node_->get_logger(),
+            *node_->get_clock(),
+            2000,
+            "[%s] current_tcp_s publish skipped: measured TCP position is non-finite",
+            name_.c_str());
+        return;
+    }
+
+    double current_tcp_s = 0.0;
+    if (!projectTcpToLineS(tcp_position, center, axis, &current_tcp_s) || !std::isfinite(current_tcp_s))
+    {
+        RCLCPP_WARN_THROTTLE(
+            node_->get_logger(),
+            *node_->get_clock(),
+            2000,
+            "[%s] current_tcp_s publish skipped: projection failed",
+            name_.c_str());
+        return;
+    }
+
+    if (std::isfinite(half_length) && half_length > 0.0 && std::abs(current_tcp_s) > half_length + 1e-6)
+    {
+        RCLCPP_DEBUG_THROTTLE(
+            node_->get_logger(),
+            *node_->get_clock(),
+            1000,
+            "[%s] measured current_tcp_s=%.6f outside line half_length=%.6f (published unclamped)",
+            name_.c_str(),
+            current_tcp_s,
+            half_length);
+    }
+
+    std_msgs::msg::Float64 msg;
+    msg.data = current_tcp_s;
+    current_tcp_s_pub_->publish(msg);
 }
 
 bool TrajectoryExecutor::geometryMutationBlocked() const
@@ -1568,6 +1760,18 @@ bool TrajectoryExecutor::validateLineGeometry(
     }
 
     const Eigen::Vector3d n_axis = axis.normalized();
+    const double dot_x = n_axis.dot(Eigen::Vector3d::UnitX());
+    if (!std::isfinite(dot_x) || std::abs(dot_x) < 1e-6)
+    {
+        if (reason) { *reason = "line axis base-x component too small for canonical sign"; }
+        return false;
+    }
+    if (dot_x < 0.0)
+    {
+        if (reason) { *reason = "line axis must point toward base +x"; }
+        return false;
+    }
+
     const Eigen::Vector3d start = center - half_length * n_axis;
     const Eigen::Vector3d end = center + half_length * n_axis;
 
@@ -1730,6 +1934,7 @@ void TrajectoryExecutor::handleCaptureLineCenter(
         line_center_pose_ = new_center;
         have_captured_orientation_ = request->keep_current_orientation;
         middle_line_ee_name_ = ee;
+        line_valid_ = true;
         ++middle_line_revision_;
     }
 
@@ -1788,6 +1993,7 @@ void TrajectoryExecutor::handleSetLineCenter(
             middle_line_ee_name_ = ee;
         }
 
+        line_valid_ = true;
         ++middle_line_revision_;
     }
 
@@ -1817,13 +2023,21 @@ void TrajectoryExecutor::handleSetLineParams(
     }
 
     Eigen::Vector3d axis(request->axis_x, request->axis_y, request->axis_z);
-    if (axis.norm() < 1e-9)
+    bool axis_flipped = false;
+    Eigen::Vector3d canonical_axis = axis;
+    if (!canonicalizeLineAxis(axis, &canonical_axis, &axis_flipped))
     {
         response->success = false;
-        response->message = "axis norm too small";
+        response->message = "axis must be finite/non-zero and have non-zero +x component in base frame";
         return;
     }
-    axis.normalize();
+
+    if (axis_flipped)
+    {
+        RCLCPP_INFO(node_->get_logger(),
+                    "[%s] set_line_params canonicalized axis sign to base +x",
+                    name_.c_str());
+    }
 
     if (request->half_length <= 0.0)
     {
@@ -1860,7 +2074,7 @@ void TrajectoryExecutor::handleSetLineParams(
     const double old_safety = safety_min_z_;
     safety_min_z_ = updated_safety_min_z;
     std::string geom_reason;
-    const bool ok = validateLineGeometry(center_snapshot, axis, half_length, &geom_reason);
+    const bool ok = validateLineGeometry(center_snapshot, canonical_axis, half_length, &geom_reason);
     safety_min_z_ = old_safety;
     if (!ok)
     {
@@ -1871,9 +2085,10 @@ void TrajectoryExecutor::handleSetLineParams(
 
     {
         std::lock_guard<std::mutex> lock(line_mutex_);
-        line_axis_ = axis;
+        line_axis_ = canonical_axis;
         line_half_length_ = half_length;
         safety_min_z_ = updated_safety_min_z;
+        line_valid_ = true;
         ++middle_line_revision_;
     }
 
@@ -1943,12 +2158,20 @@ void TrajectoryExecutor::handleProjectPointToLine(
     Eigen::Vector3d center;
     Eigen::Vector3d axis;
     double half_length = 0.0;
+    bool line_valid = false;
 
     {
         std::lock_guard<std::mutex> lock(line_mutex_);
         center = line_center_pose_.translation();
         axis = line_axis_;
         half_length = std::clamp(line_half_length_, min_line_half_length_, max_line_half_length_);
+        line_valid = line_valid_;
+    }
+
+    if (!line_valid)
+    {
+        fail("middle line is not valid");
+        return;
     }
 
     if (!finite3(center) || !finite3(axis) || axis.norm() < 1e-9 || !std::isfinite(half_length))
@@ -2031,15 +2254,15 @@ void TrajectoryExecutor::handleProjectPointToLine(
     response->line_center.point.y = center.y();
     response->line_center.point.z = center.z();
 
-    RCLCPP_INFO(node_->get_logger(),
-                "[%s] projected point p=%s onto line center=%s axis=%s -> s=%.6f cross_track=%.6f half_length=%.6f",
-                name_.c_str(),
-                vecToString(p).c_str(),
-                vecToString(center).c_str(),
-                vecToString(axis).c_str(),
-                s,
-                cross_track_error,
-                half_length);
+    RCLCPP_DEBUG_THROTTLE(
+        node_->get_logger(),
+        *node_->get_clock(),
+        1000,
+        "[%s] projected s=%.6f cross_track=%.6f half_length=%.6f",
+        name_.c_str(),
+        s,
+        cross_track_error,
+        half_length);
 }
 
 void TrajectoryExecutor::updateComputeTimingDebug(std::chrono::steady_clock::time_point start_time)
