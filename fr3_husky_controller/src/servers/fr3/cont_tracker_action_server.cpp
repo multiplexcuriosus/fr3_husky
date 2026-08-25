@@ -359,6 +359,9 @@ void ContTracker::onGoalAccepted(const ActionT::Goal& goal)
     rt_error_ = TrackerError::NONE;
     phase_ = TrackerPhase::ACCEPTED;
     first_command_written_ = false;
+    control_session_started_ = false;
+    last_gate_rt_diag_.store(GateRtDiag::NONE, std::memory_order_release);
+    last_gate_owner_.store(MotionGate::Owner::NONE, std::memory_order_release);
     terminal_mode_ = TerminalMode::NONE;
     stale_braking_ = false;
     stale_hold_active_ = false;
@@ -371,6 +374,8 @@ void ContTracker::onGoalAccepted(const ActionT::Goal& goal)
 
 void ContTracker::onStart()
 {
+    control_session_started_ = false;
+
     const auto gate_result = motion_gate_->tryAcquireRT(MotionGate::Owner::CONT_TRACKER);
     if (gate_result == MotionGate::AcquireResult::BUSY)
     {
@@ -378,17 +383,14 @@ void ContTracker::onStart()
         start_error_ = TrackerError::START_FAILED;
         storeRtError(TrackerError::START_FAILED);
         session_active_.store(false, std::memory_order_release);
-        const MotionGate::Owner current_owner = motion_gate_->owner();
-        RCLCPP_ERROR(node_->get_logger(),
-                     "[%s] start rejected by motion gate owner=%s name=%s",
-                     name_.c_str(),
-                     MotionGate::ownerToString(current_owner).c_str(),
-                     motion_gate_->ownerName(current_owner).c_str());
+        last_gate_owner_.store(motion_gate_->owner(), std::memory_order_release);
+        last_gate_rt_diag_.store(GateRtDiag::ACQUIRE_BUSY, std::memory_order_release);
         finalizeGoal(StopReason::ABORTED);
         return;
     }
     gate_acquired_ = true;
-    RCLCPP_INFO(node_->get_logger(), "[%s] gate acquired for activation", name_.c_str());
+    last_gate_owner_.store(MotionGate::Owner::CONT_TRACKER, std::memory_order_release);
+    last_gate_rt_diag_.store(GateRtDiag::ACQUIRE_OK, std::memory_order_release);
 
     executor_state_.store(ExecutorState::ACTIVE, std::memory_order_release);
     stop_in_progress_.store(false, std::memory_order_release);
@@ -436,6 +438,7 @@ void ContTracker::onStart()
     active_target_bound_m_.store(active_line_.half_length, std::memory_order_relaxed);
     session_accepts_updates_.store(true, std::memory_order_release);
     session_active_.store(true, std::memory_order_release);
+    control_session_started_ = true;
 
     phase_ = referenceIsHolding() ? TrackerPhase::HOLDING : TrackerPhase::TRACKING;
     writeTelemetrySnapshot(true);
@@ -983,7 +986,10 @@ void ContTracker::onStop(StopReason reason)
     active_target_bound_m_.store(0.0, std::memory_order_relaxed);
     stop_in_progress_.store(true, std::memory_order_release);
 
-    model_updater_.haltCommands();
+    if (control_session_started_)
+    {
+        model_updater_.haltCommands();
+    }
 
     LastStopReason final_reason = LastStopReason::NONE;
     if (reason == StopReason::SUCCEEDED) { final_reason = LastStopReason::SUCCEEDED; }
@@ -1003,14 +1009,22 @@ void ContTracker::onStop(StopReason reason)
         if (release_result == MotionGate::ReleaseResult::RELEASED)
         {
             gate_acquired_ = false;
-            RCLCPP_INFO(node_->get_logger(), "[%s] gate released on stop", name_.c_str());
+            last_gate_rt_diag_.store(GateRtDiag::RELEASED, std::memory_order_release);
+            last_gate_owner_.store(MotionGate::Owner::NONE, std::memory_order_release);
         }
         else
         {
             gate_acquired_ = motion_gate_->owner() == MotionGate::Owner::CONT_TRACKER;
-            RCLCPP_WARN(node_->get_logger(), "[%s] gate release on stop ignored; current owner=%s", name_.c_str(), MotionGate::ownerToString(motion_gate_->owner()).c_str());
+            last_gate_owner_.store(motion_gate_->owner(), std::memory_order_release);
+            last_gate_rt_diag_.store(
+                release_result == MotionGate::ReleaseResult::ALREADY_FREE
+                    ? GateRtDiag::RELEASE_ALREADY_FREE
+                    : GateRtDiag::RELEASE_NOT_OWNER,
+                std::memory_order_release);
         }
     }
+
+    control_session_started_ = false;
 
     writeTelemetrySnapshot(false);
 }
@@ -1259,6 +1273,27 @@ void ContTracker::telemetryTimerCallback()
             lastStopReasonToString(last_stop_reason_.load(std::memory_order_acquire)).c_str(),
             errorToString(static_cast<TrackerError>(snapshot.error)),
             formatMotionStatsSummary().c_str());
+    }
+
+    const GateRtDiag gate_diag = last_gate_rt_diag_.exchange(GateRtDiag::NONE, std::memory_order_acq_rel);
+    const MotionGate::Owner gate_owner = last_gate_owner_.load(std::memory_order_acquire);
+    if (gate_diag == GateRtDiag::ACQUIRE_BUSY)
+    {
+        RCLCPP_WARN(
+            node_->get_logger(),
+            "[%s] gate busy owner=%s name=%s",
+            name_.c_str(),
+            MotionGate::ownerToString(gate_owner).c_str(),
+            motion_gate_->ownerName(gate_owner).c_str());
+    }
+    else if (gate_diag == GateRtDiag::RELEASE_ALREADY_FREE || gate_diag == GateRtDiag::RELEASE_NOT_OWNER)
+    {
+        RCLCPP_WARN(
+            node_->get_logger(),
+            "[%s] gate release mismatch current_owner=%s name=%s",
+            name_.c_str(),
+            MotionGate::ownerToString(gate_owner).c_str(),
+            motion_gate_->ownerName(gate_owner).c_str());
     }
 
     telemetry_prev_session_active_ = active;

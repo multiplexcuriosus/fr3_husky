@@ -7,6 +7,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -73,6 +74,8 @@ public:
     void onStart() override
     {
         ++start_count_;
+        control_session_started_ = false;
+
         if (use_gate_)
         {
             const auto result = gate_->tryAcquireRT(gate_owner_);
@@ -87,6 +90,8 @@ public:
         {
             throw std::runtime_error("test onStart failure");
         }
+
+        control_session_started_ = true;
     }
 
     ComputeResult compute(const rclcpp::Time&, const rclcpp::Duration&) override
@@ -101,7 +106,7 @@ public:
     void onStop(StopReason) override
     {
         ++stop_count_;
-        if (halt_on_stop_)
+        if (halt_on_stop_ && control_session_started_)
         {
             model_updater_.haltCommands();
         }
@@ -111,6 +116,8 @@ public:
             gate_->releaseRT(gate_owner_);
             gate_acquired_ = false;
         }
+
+        control_session_started_ = false;
     }
 
     void requestFinish() { finish_requested_.store(true, std::memory_order_release); }
@@ -127,6 +134,7 @@ private:
     bool halt_on_stop_{false};
     bool use_gate_{true};
     bool gate_acquired_{false};
+    bool control_session_started_{false};
 
     std::atomic<bool> finish_requested_{false};
     std::atomic<bool> throw_on_goal_accept_{false};
@@ -497,7 +505,48 @@ TEST(ActionLifecycleTest, StartupFailureReleasesGate)
     auto result_future = state.result_promise.get_future();
     ASSERT_TRUE(spinUntil(exec, [&]() { return result_future.wait_for(0ms) == std::future_status::ready; }));
     EXPECT_EQ(result_future.get(), rclcpp_action::ResultCode::ABORTED);
+    EXPECT_EQ(updater.halt_count.load(std::memory_order_acquire), 0);
     EXPECT_EQ(gate->owner(), MotionGate::Owner::NONE);
+    EXPECT_FALSE(server->hasActivateRequest());
+    EXPECT_FALSE(server->isActive());
+}
+
+TEST(ActionLifecycleTest, GateBusyStartupFailureDoesNotHaltOrStealGate)
+{
+    auto lifecycle_node = rclcpp_lifecycle::LifecycleNode::make_shared("test_gate_busy_startup_failure");
+    auto client_node = rclcpp::Node::make_shared("test_gate_busy_startup_failure_client");
+    rclcpp::executors::SingleThreadedExecutor exec;
+    exec.add_node(lifecycle_node->get_node_base_interface());
+    exec.add_node(client_node);
+
+    auto gate = std::make_shared<MotionGate>();
+    EXPECT_EQ(gate->tryAcquireRT(MotionGate::Owner::TRAJECTORY_EXECUTOR), MotionGate::AcquireResult::ACQUIRED);
+
+    FakeModelUpdater updater;
+    auto server = std::make_shared<TestActionServer>(
+        "cont_tracker_gate_busy_start", lifecycle_node, updater, 0, gate,
+        MotionGate::Owner::CONT_TRACKER, true);
+
+    TestScheduler scheduler;
+    scheduler.addServer(server);
+
+    auto client = rclcpp_action::create_client<LineAction>(client_node, "cont_tracker_gate_busy_start");
+    ASSERT_TRUE(spinUntil(exec, [&]() { return client->action_server_is_ready(); }));
+
+    GoalSendState state;
+    auto goal_handle = sendGoalAndWaitAccepted(exec, client, &state);
+    ASSERT_NE(goal_handle, nullptr);
+
+    scheduler.tick(rclcpp::Clock().now(), rclcpp::Duration::from_seconds(0.01));
+
+    auto result_future = state.result_promise.get_future();
+    ASSERT_TRUE(spinUntil(exec, [&]() { return result_future.wait_for(0ms) == std::future_status::ready; }));
+    EXPECT_EQ(result_future.get(), rclcpp_action::ResultCode::ABORTED);
+
+    EXPECT_EQ(updater.halt_count.load(std::memory_order_acquire), 0);
+    EXPECT_EQ(gate->owner(), MotionGate::Owner::TRAJECTORY_EXECUTOR);
+    EXPECT_FALSE(server->hasActivateRequest());
+    EXPECT_FALSE(server->isActive());
 }
 
 }  // namespace

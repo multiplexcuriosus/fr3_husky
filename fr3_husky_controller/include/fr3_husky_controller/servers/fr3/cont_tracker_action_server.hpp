@@ -36,6 +36,16 @@ public:
     using StopReason = typename Base::StopReason;
     using ResultPtr = typename Base::ResultPtr;
 
+    enum class GateRtDiag : std::uint8_t
+    {
+        NONE = 0,
+        ACQUIRE_OK,
+        ACQUIRE_BUSY,
+        RELEASED,
+        RELEASE_ALREADY_FREE,
+        RELEASE_NOT_OWNER,
+    };
+
     ContTracker(
         const std::string& name,
         const NodePtr& node,
@@ -265,6 +275,7 @@ private:
     TrackerError rt_error_{TrackerError::NONE};
     TrackerPhase phase_{TrackerPhase::STOPPED};
     bool first_command_written_{false};
+    bool control_session_started_{false};
 
     Eigen::Vector3d last_current_pos_{Eigen::Vector3d::Zero()};
     Eigen::Vector3d last_desired_pos_{Eigen::Vector3d::Zero()};
@@ -276,6 +287,8 @@ private:
     std::atomic<LastStopReason> last_stop_reason_{LastStopReason::NONE};
     std::atomic<bool> stop_in_progress_{false};
     std::atomic<bool> session_active_{false};
+    std::atomic<GateRtDiag> last_gate_rt_diag_{GateRtDiag::NONE};
+    std::atomic<MotionGate::Owner> last_gate_owner_{MotionGate::Owner::NONE};
     rclcpp::Time last_start_time_;
     rclcpp::Time last_stop_time_;
 
