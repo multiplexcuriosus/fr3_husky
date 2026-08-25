@@ -151,6 +151,17 @@ public:
 
     ~ActionServerBase() override = default;
 
+    bool handleCancelRequest() override
+    {
+        if (pending_cancel_finalize_requested_.exchange(false, std::memory_order_acq_rel))
+        {
+            consumeCancelRequest();
+            finalizeGoal(StopReason::CANCELED);
+            return true;
+        }
+        return false;
+    }
+
     bool update(const rclcpp::Time& time, const rclcpp::Duration& period) override
     {
         if (consumeCancelRequest())
@@ -362,7 +373,7 @@ private:
 
     CancelResponse handleCancel(const std::shared_ptr<GoalHandle> goal_handle)
     {
-        bool should_finalize_pending = false;
+        bool pending_cancel_requested = false;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (active_goal_ && active_goal_.get() == goal_handle.get())
@@ -374,16 +385,13 @@ private:
             if (pending_goal_handle_ && pending_goal_handle_.get() == goal_handle.get())
             {
                 clearActivateRequest();
-                should_finalize_pending = true;
+                pending_cancel_finalize_requested_.store(true, std::memory_order_release);
+                requestCancel();
+                pending_cancel_requested = true;
                 RCLCPP_WARN(node_->get_logger(), "[%s] goal canceled while pending", name_.c_str());
             }
         }
-
-        if (should_finalize_pending)
-        {
-            finalizeGoal(StopReason::CANCELED);
-        }
-        return should_finalize_pending ? CancelResponse::ACCEPT : CancelResponse::REJECT;
+        return pending_cancel_requested ? CancelResponse::ACCEPT : CancelResponse::REJECT;
     }
 
     void handleAccepted(const std::shared_ptr<GoalHandle> goal_handle)
@@ -394,6 +402,11 @@ private:
         }
 
         Goal goal_copy = *(goal_handle->get_goal());
+
+        // Move ACCEPTED -> EXECUTING before calling user hooks so any early
+        // abort/cancel/success path uses valid rcl_action transitions.
+        goal_handle->execute();
+
         RCLCPP_INFO(node_->get_logger(), "[%s] goal accepted", name_.c_str());
         try
         {
@@ -454,10 +467,6 @@ private:
             return;
         }
 
-        // Transition from ACCEPTED → EXECUTING so that canceled()/succeed()/abort()
-        // are valid state transitions when the goal finishes.
-        goal_handle->execute();
-
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (active_ || active_goal_)
@@ -481,6 +490,7 @@ protected:
     void finalizeGoal(StopReason reason)
     {
         std::shared_ptr<GoalHandle> goal_handle;
+        bool finalized_active_goal = false;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (active_goal_)
@@ -488,6 +498,7 @@ protected:
                 goal_handle = active_goal_;
                 active_goal_.reset();
                 active_ = false;
+                finalized_active_goal = true;
             }
             else if (pending_goal_handle_)
             {
@@ -506,17 +517,20 @@ protected:
 
         RCLCPP_INFO(node_->get_logger(), "[%s] goal finalized reason=%s", name_.c_str(), reason == StopReason::CANCELED ? "canceled" : reason == StopReason::SUCCEEDED ? "succeeded" : "aborted");
 
-        try
+        if (finalized_active_goal)
         {
-            onStop(reason);
-        }
-        catch (const std::exception& e)
-        {
-            RCLCPP_ERROR(node_->get_logger(), "[%s] onStop exception: %s", name_.c_str(), e.what());
-        }
-        catch (...)
-        {
-            RCLCPP_ERROR(node_->get_logger(), "[%s] onStop unknown exception", name_.c_str());
+            try
+            {
+                onStop(reason);
+            }
+            catch (const std::exception& e)
+            {
+                RCLCPP_ERROR(node_->get_logger(), "[%s] onStop exception: %s", name_.c_str(), e.what());
+            }
+            catch (...)
+            {
+                RCLCPP_ERROR(node_->get_logger(), "[%s] onStop unknown exception", name_.c_str());
+            }
         }
 
         auto result = safeMakeResult(reason);
@@ -570,6 +584,7 @@ protected:
     std::shared_ptr<GoalHandle> preempt_goal_handle_;
     Goal preempt_goal_msg_{};
     std::atomic<bool> preempt_pending_{false};
+    std::atomic<bool> pending_cancel_finalize_requested_{false};
 };
 
 #define REGISTER_FR3_ACTION_SERVER(ServerClass, server_name)                               \

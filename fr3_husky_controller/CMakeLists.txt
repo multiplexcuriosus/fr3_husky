@@ -214,6 +214,13 @@ if(BUILD_TESTING)
     if(TARGET test_action_server_lifecycle)
         target_include_directories(test_action_server_lifecycle PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        ament_target_dependencies(test_action_server_lifecycle
+            rclcpp
+            rclcpp_action
+            rclcpp_lifecycle
+            fr3_husky_msgs)
+        target_link_libraries(test_action_server_lifecycle
+            ${PROJECT_NAME})
     endif()
 endif()
 

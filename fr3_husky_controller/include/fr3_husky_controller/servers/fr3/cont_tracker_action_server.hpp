@@ -276,7 +276,6 @@ private:
     std::atomic<LastStopReason> last_stop_reason_{LastStopReason::NONE};
     std::atomic<bool> stop_in_progress_{false};
     std::atomic<bool> session_active_{false};
-    std::atomic<bool> pending_gate_release_{false};
     rclcpp::Time last_start_time_;
     rclcpp::Time last_stop_time_;
 
