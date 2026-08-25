@@ -55,8 +55,12 @@ public:
     virtual bool isActive() const = 0;
     virtual int priority() const { return 0; }
 
+    bool hasActivateRequest() const;
     bool consumeActivateRequest();
+    void clearActivateRequest();
+    bool hasCancelRequest() const;
     bool consumeCancelRequest();
+    virtual bool handleCancelRequest() { return consumeCancelRequest(); }
 
     virtual void onActivated() {};
     virtual void onDeactivated() {};
@@ -149,6 +153,12 @@ public:
 
     bool update(const rclcpp::Time& time, const rclcpp::Duration& period) override
     {
+        if (consumeCancelRequest())
+        {
+            finalizeGoal(StopReason::CANCELED);
+            return true;
+        }
+
         // Handle same-server preemption: a new goal arrived while this server was active.
         if (preempt_pending_.load(std::memory_order_acquire))
         {
@@ -218,8 +228,26 @@ public:
         return active_;
     }
 
+    bool activatePendingGoalIfReady()
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (active_ || !pending_goal_handle_)
+        {
+            return false;
+        }
+
+        active_goal_     = pending_goal_handle_;
+        active_goal_msg_ = std::move(pending_goal_msg_);
+        pending_goal_handle_.reset();
+        pending_goal_msg_ = Goal{};
+        active_          = true;
+        RCLCPP_INFO(node_->get_logger(), "[%s] activation started for pending goal", name_.c_str());
+        return true;
+    }
+
     void onActivated() override
     {
+        if (!activatePendingGoalIfReady())
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (!active_ || !active_goal_)
@@ -227,6 +255,8 @@ public:
                 return;
             }
         }
+
+        RCLCPP_INFO(node_->get_logger(), "[%s] activation selected", name_.c_str());
 
         try
         {
@@ -307,11 +337,11 @@ private:
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            if (active_ || active_goal_ || preempt_pending_.load(std::memory_order_relaxed))
+            if (active_ || active_goal_ || pending_goal_handle_ || preempt_pending_.load(std::memory_order_relaxed))
             {
                 if (!allowPreemption())
                 {
-                    RCLCPP_WARN(node_->get_logger(), "[%s] Reject goal while another goal is active", name_.c_str());
+                    RCLCPP_WARN(node_->get_logger(), "[%s] Reject goal while another goal is active or pending", name_.c_str());
                     return GoalResponse::REJECT;
                 }
                 if (preempt_pending_.load(std::memory_order_relaxed))
@@ -332,14 +362,30 @@ private:
 
     CancelResponse handleCancel(const std::shared_ptr<GoalHandle> goal_handle)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!active_ || !active_goal_ || active_goal_.get() != goal_handle.get())
+        bool should_finalize_pending = false;
         {
-            return CancelResponse::REJECT;
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (active_goal_ && active_goal_.get() == goal_handle.get())
+            {
+                requestCancel();
+                RCLCPP_WARN(node_->get_logger(), "[%s] cancel requested for active goal", name_.c_str());
+                return CancelResponse::ACCEPT;
+            }
+            if (pending_goal_handle_ && pending_goal_handle_.get() == goal_handle.get())
+            {
+                clearActivateRequest();
+                pending_goal_handle_.reset();
+                pending_goal_msg_ = Goal{};
+                should_finalize_pending = true;
+                RCLCPP_WARN(node_->get_logger(), "[%s] goal canceled while pending", name_.c_str());
+            }
         }
 
-        requestCancel();
-        return CancelResponse::ACCEPT;
+        if (should_finalize_pending)
+        {
+            finalizeGoal(StopReason::CANCELED);
+        }
+        return should_finalize_pending ? CancelResponse::ACCEPT : CancelResponse::REJECT;
     }
 
     void handleAccepted(const std::shared_ptr<GoalHandle> goal_handle)
@@ -350,6 +396,7 @@ private:
         }
 
         Goal goal_copy = *(goal_handle->get_goal());
+        RCLCPP_INFO(node_->get_logger(), "[%s] goal accepted", name_.c_str());
         try
         {
             onGoalAccepted(goal_copy);
@@ -381,30 +428,45 @@ private:
                 preempt_goal_handle_ = goal_handle;
                 preempt_goal_msg_    = std::move(goal_copy);
                 preempt_pending_.store(true, std::memory_order_release);
+                RCLCPP_INFO(node_->get_logger(), "[%s] activation pending while higher-priority server is active", name_.c_str());
                 return;
             }
-            active_goal_     = goal_handle;
-            active_goal_msg_ = std::move(goal_copy);
-            active_          = true;
+            pending_goal_handle_ = goal_handle;
+            pending_goal_msg_    = std::move(goal_copy);
         }
 
+        RCLCPP_INFO(node_->get_logger(), "[%s] activation pending", name_.c_str());
         requestActivate();
     }
 
+protected:
     void finalizeGoal(StopReason reason)
     {
         std::shared_ptr<GoalHandle> goal_handle;
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            if (!active_goal_)
+            if (active_goal_)
+            {
+                goal_handle = active_goal_;
+                active_goal_.reset();
+                active_ = false;
+            }
+            else if (pending_goal_handle_)
+            {
+                goal_handle = pending_goal_handle_;
+                pending_goal_handle_.reset();
+                pending_goal_msg_ = Goal{};
+                active_ = false;
+            }
+            else
             {
                 active_ = false;
                 return;
             }
-            goal_handle = active_goal_;
-            active_goal_.reset();
-            active_ = false;
+            clearActivateRequest();
         }
+
+        RCLCPP_INFO(node_->get_logger(), "[%s] goal finalized reason=%s", name_.c_str(), reason == StopReason::CANCELED ? "canceled" : reason == StopReason::SUCCEEDED ? "succeeded" : "aborted");
 
         try
         {
@@ -461,6 +523,10 @@ private:
     Goal active_goal_msg_{};
     bool active_{false};
     mutable std::mutex mutex_;
+
+    // Accepted goal waiting for activation due to controller priority / selection.
+    std::shared_ptr<GoalHandle> pending_goal_handle_;
+    Goal pending_goal_msg_{};
 
     // Same-server preemption: pending new goal that will replace the current one in update()
     std::shared_ptr<GoalHandle> preempt_goal_handle_;

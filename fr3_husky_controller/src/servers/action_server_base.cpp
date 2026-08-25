@@ -27,9 +27,24 @@ ActionServerManager::ActionServerManager(
 {
 }
 
+bool ActionServerManager::hasActivateRequest() const
+{
+    return activate_requested_.load(std::memory_order_acquire);
+}
+
 bool ActionServerManager::consumeActivateRequest()
 {
     return activate_requested_.exchange(false, std::memory_order_acq_rel);
+}
+
+void ActionServerManager::clearActivateRequest()
+{
+    activate_requested_.store(false, std::memory_order_release);
+}
+
+bool ActionServerManager::hasCancelRequest() const
+{
+    return cancel_requested_.load(std::memory_order_acquire);
 }
 
 bool ActionServerManager::consumeCancelRequest()

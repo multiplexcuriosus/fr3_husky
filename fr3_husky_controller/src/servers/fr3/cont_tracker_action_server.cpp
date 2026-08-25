@@ -332,13 +332,6 @@ bool ContTracker::acceptGoal(const ActionT::Goal& goal)
         return false;
     }
 
-    std::string reason;
-    if (!motion_gate_->tryAcquire(MotionGate::Owner::CONT_TRACKER, name_, &reason))
-    {
-        return false;
-    }
-
-    gate_acquired_ = true;
     return true;
 }
 
@@ -378,6 +371,20 @@ void ContTracker::onGoalAccepted(const ActionT::Goal& goal)
 
 void ContTracker::onStart()
 {
+    std::string gate_reason;
+    if (!motion_gate_->tryAcquire(MotionGate::Owner::CONT_TRACKER, name_, &gate_reason))
+    {
+        start_failed_ = true;
+        start_error_ = TrackerError::START_FAILED;
+        storeRtError(TrackerError::START_FAILED);
+        session_active_.store(false, std::memory_order_release);
+        RCLCPP_ERROR(node_->get_logger(), "[%s] start rejected by motion gate: %s", name_.c_str(), gate_reason.c_str());
+        finalizeGoal(StopReason::ABORTED);
+        return;
+    }
+    gate_acquired_ = true;
+    RCLCPP_INFO(node_->get_logger(), "[%s] gate acquired for activation", name_.c_str());
+
     executor_state_.store(ExecutorState::ACTIVE, std::memory_order_release);
     stop_in_progress_.store(false, std::memory_order_release);
     last_stop_reason_.store(LastStopReason::NONE, std::memory_order_release);
@@ -391,7 +398,7 @@ void ContTracker::onStart()
         start_error_ = error;
         storeRtError(error == TrackerError::NONE ? TrackerError::START_FAILED : error);
         session_active_.store(false, std::memory_order_release);
-        writeTelemetrySnapshot(false);
+        finalizeGoal(StopReason::ABORTED);
         return;
     }
 
@@ -402,7 +409,7 @@ void ContTracker::onStart()
         start_error_ = TrackerError::TASK_DATA_MISSING;
         storeRtError(TrackerError::TASK_DATA_MISSING);
         session_active_.store(false, std::memory_order_release);
-        writeTelemetrySnapshot(false);
+        finalizeGoal(StopReason::ABORTED);
         return;
     }
 
@@ -987,8 +994,11 @@ void ContTracker::onStop(StopReason reason)
 
     if (gate_acquired_)
     {
-        pending_gate_release_.store(true, std::memory_order_release);
+        motion_gate_->release(MotionGate::Owner::CONT_TRACKER);
+        gate_acquired_ = false;
+        RCLCPP_INFO(node_->get_logger(), "[%s] gate released on stop", name_.c_str());
     }
+    pending_gate_release_.store(false, std::memory_order_release);
 
     writeTelemetrySnapshot(false);
 }
@@ -1245,6 +1255,7 @@ void ContTracker::telemetryTimerCallback()
     {
         motion_gate_->release(MotionGate::Owner::CONT_TRACKER);
         gate_acquired_ = false;
+        RCLCPP_INFO(node_->get_logger(), "[%s] gate released via telemetry cleanup", name_.c_str());
     }
 }
 
