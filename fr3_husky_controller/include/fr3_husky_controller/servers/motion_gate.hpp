@@ -21,64 +21,98 @@ public:
         MOVE_TO_JOINT,
     };
 
-    bool tryAcquire(Owner owner, const std::string& name, std::string* reason)
+    bool tryAcquireRT(Owner requested_owner, const std::string& name, std::string* reason) noexcept
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (owner_ == Owner::NONE)
+        Owner expected = Owner::NONE;
+        if (!owner_.compare_exchange_strong(expected, requested_owner, std::memory_order_acq_rel, std::memory_order_acquire))
         {
-            owner_ = owner;
+            if (expected == requested_owner && ownerNameRT() == name)
+            {
+                return true;
+            }
+            if (reason)
+            {
+                *reason = "motion busy by owner=" + ownerToString(expected) + " name=" + ownerNameRT();
+            }
+            return false;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(name_mutex_);
             owner_name_ = name;
-            RCLCPP_INFO(rclcpp::get_logger("motion_gate"),
-                        "acquire owner=%s name=%s",
-                        ownerToString(owner_).c_str(), owner_name_.c_str());
-            return true;
         }
-
-        if (owner_ == owner && owner_name_ == name)
-        {
-            RCLCPP_INFO(rclcpp::get_logger("motion_gate"),
-                        "re-acquire owner=%s name=%s",
-                        ownerToString(owner_).c_str(), owner_name_.c_str());
-            return true;
-        }
-
-        if (reason)
-        {
-            *reason = "motion busy by owner=" + ownerToString(owner_) + " name=" + owner_name_;
-        }
-        RCLCPP_WARN(rclcpp::get_logger("motion_gate"),
-                    "acquire denied requester_owner=%s requester_name=%s current_owner=%s current_name=%s",
-                    ownerToString(owner).c_str(), name.c_str(), ownerToString(owner_).c_str(), owner_name_.c_str());
-        return false;
+        return true;
     }
 
-    void release(Owner owner)
+    bool tryAcquire(Owner requested_owner, const std::string& name, std::string* reason)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (owner_ != owner)
+        const bool acquired = tryAcquireRT(requested_owner, name, reason);
+        if (acquired)
+        {
+            RCLCPP_INFO(rclcpp::get_logger("motion_gate"),
+                        "acquire owner=%s name=%s",
+                        ownerToString(requested_owner).c_str(), name.c_str());
+        }
+        else if (reason)
+        {
+            RCLCPP_WARN(rclcpp::get_logger("motion_gate"),
+                        "acquire denied requester_owner=%s requester_name=%s current_owner=%s current_name=%s",
+                        ownerToString(requested_owner).c_str(),
+                        name.c_str(),
+                        ownerToString(owner()).c_str(),
+                        ownerName().c_str());
+        }
+        return acquired;
+    }
+
+    bool releaseRT(Owner requested_owner) noexcept
+    {
+        Owner expected = requested_owner;
+        if (!owner_.compare_exchange_strong(expected, Owner::NONE, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            return false;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(name_mutex_);
+            owner_name_.clear();
+        }
+        return true;
+    }
+
+    bool release(Owner requested_owner)
+    {
+        if (!releaseRT(requested_owner))
         {
             RCLCPP_WARN(rclcpp::get_logger("motion_gate"),
                         "release ignored requester_owner=%s current_owner=%s current_name=%s",
-                        ownerToString(owner).c_str(), ownerToString(owner_).c_str(), owner_name_.c_str());
-            return;
+                        ownerToString(requested_owner).c_str(),
+                        ownerToString(owner()).c_str(),
+                        ownerName().c_str());
+            return false;
         }
 
         RCLCPP_INFO(rclcpp::get_logger("motion_gate"),
                     "release owner=%s name=%s",
-                    ownerToString(owner_).c_str(), owner_name_.c_str());
-        owner_ = Owner::NONE;
-        owner_name_.clear();
+                    ownerToString(requested_owner).c_str(),
+                    ownerName().c_str());
+        return true;
     }
 
-    Owner owner() const
+    Owner owner() const noexcept
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return owner_;
+        return owner_.load(std::memory_order_acquire);
+    }
+
+    std::string ownerNameRT() const noexcept
+    {
+        std::lock_guard<std::mutex> lock(name_mutex_);
+        return owner_name_;
     }
 
     std::string ownerName() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::mutex> lock(name_mutex_);
         return owner_name_;
     }
 
@@ -96,8 +130,8 @@ public:
     }
 
 private:
-    mutable std::mutex mutex_;
-    Owner owner_{Owner::NONE};
+    std::atomic<Owner> owner_{Owner::NONE};
+    mutable std::mutex name_mutex_;
     std::string owner_name_;
 };
 

@@ -374,8 +374,6 @@ private:
             if (pending_goal_handle_ && pending_goal_handle_.get() == goal_handle.get())
             {
                 clearActivateRequest();
-                pending_goal_handle_.reset();
-                pending_goal_msg_ = Goal{};
                 should_finalize_pending = true;
                 RCLCPP_WARN(node_->get_logger(), "[%s] goal canceled while pending", name_.c_str());
             }
@@ -404,6 +402,26 @@ private:
         catch (const std::exception& e)
         {
             RCLCPP_ERROR(node_->get_logger(), "[%s] onGoalAccepted exception: %s", name_.c_str(), e.what());
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (active_goal_ && active_goal_.get() == goal_handle.get())
+                {
+                    active_goal_.reset();
+                    active_ = false;
+                }
+                else if (pending_goal_handle_ && pending_goal_handle_.get() == goal_handle.get())
+                {
+                    pending_goal_handle_.reset();
+                    pending_goal_msg_ = Goal{};
+                }
+                else if (preempt_goal_handle_ && preempt_goal_handle_.get() == goal_handle.get())
+                {
+                    preempt_goal_handle_.reset();
+                    preempt_goal_msg_ = Goal{};
+                    preempt_pending_.store(false, std::memory_order_release);
+                }
+                clearActivateRequest();
+            }
             auto result = safeMakeResult(StopReason::ABORTED);
             goal_handle->abort(result);
             return;
@@ -411,6 +429,26 @@ private:
         catch (...)
         {
             RCLCPP_ERROR(node_->get_logger(), "[%s] onGoalAccepted unknown exception", name_.c_str());
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (active_goal_ && active_goal_.get() == goal_handle.get())
+                {
+                    active_goal_.reset();
+                    active_ = false;
+                }
+                else if (pending_goal_handle_ && pending_goal_handle_.get() == goal_handle.get())
+                {
+                    pending_goal_handle_.reset();
+                    pending_goal_msg_ = Goal{};
+                }
+                else if (preempt_goal_handle_ && preempt_goal_handle_.get() == goal_handle.get())
+                {
+                    preempt_goal_handle_.reset();
+                    preempt_goal_msg_ = Goal{};
+                    preempt_pending_.store(false, std::memory_order_release);
+                }
+                clearActivateRequest();
+            }
             auto result = safeMakeResult(StopReason::ABORTED);
             goal_handle->abort(result);
             return;

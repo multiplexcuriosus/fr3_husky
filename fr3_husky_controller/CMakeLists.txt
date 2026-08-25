@@ -207,6 +207,14 @@ if(BUILD_TESTING)
         target_include_directories(test_trajectory_line_math PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/include)
     endif()
+
+    ament_add_gtest(test_action_server_lifecycle
+        test/test_action_server_lifecycle.cpp)
+
+    if(TARGET test_action_server_lifecycle)
+        target_include_directories(test_action_server_lifecycle PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    endif()
 endif()
 
 ament_package()
